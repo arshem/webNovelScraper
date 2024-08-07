@@ -72,6 +72,7 @@ lightnovelpub.com
 
 - `GET /`: Serves the main web interface.
 - `POST /download`: Initiates the download process using the provided start URL.
+- `GET /books`: Used to generate a JSON file of books in `public` directory
 
 ### Functions
 
