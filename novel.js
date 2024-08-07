@@ -22,28 +22,32 @@ const headers = {
 };
 
 async function fetchChapter(url, sendUpdate) {
-    try {
-        sendUpdate(`Fetching chapter from ${url}`);
-        const response = await axios.get(url, { headers });
-        const $ = cheerio.load(response.data);
+    if(url !== "javascript:;") {
+        try {
+            const response = await axios.get(url, { headers });
+            const $ = cheerio.load(response.data);
 
-        const chapterTitle = $('.chapter-title').text().trim() || 'Untitled Chapter';
-        const chapterContainer = $('#chapter-container');
-        
-        if (!chapterContainer.length) {
-            sendUpdate(`Could not find the chapter content in ${url}`);
+            const chapterTitle = $('.chapter-title').text().trim() || 'Untitled Chapter';
+            const chapterContainer = $('#chapter-container');
+            
+            if (!chapterContainer.length) {
+                sendUpdate(`Could not find the chapter content in ${url}`);
+                return [null, null];
+            }
+
+            const chapterText = `<h1>${chapterTitle}</h1>\n${chapterContainer.html()}`;
+            sendUpdate(`Successfully fetched chapter: "${chapterTitle}"`);
+
+            const nextChapterLink = $('a[rel="next"]');
+            const nextChapterUrl = nextChapterLink.length ? new URL(nextChapterLink.attr('href'), url).toString() : null;
+
+            return [chapterText, nextChapterUrl];
+        } catch (error) {
+            sendUpdate(`Failed to fetch chapter from ${url}: ${error}`);
             return [null, null];
         }
-
-        const chapterText = `<h1>${chapterTitle}</h1>\n${chapterContainer.html()}`;
-        sendUpdate(`Successfully fetched chapter: "${chapterTitle}"`);
-
-        const nextChapterLink = $('a[rel="next"]');
-        const nextChapterUrl = nextChapterLink.length ? new URL(nextChapterLink.attr('href'), url).toString() : null;
-
-        return [chapterText, nextChapterUrl];
-    } catch (error) {
-        sendUpdate(`Failed to fetch chapter from ${url}: ${error}`);
+    } else {
+        sendUpdate("Downloading Chapters Completed...");
         return [null, null];
     }
 }
@@ -51,7 +55,6 @@ async function fetchChapter(url, sendUpdate) {
 function saveChapter(content, chapterNumber, directory, sendUpdate) {
     const filename = path.join("public/"+directory, `chapter_${chapterNumber}.html`);
     fs.writeFileSync(filename, content, 'utf-8');
-    sendUpdate(`Saved Chapter ${chapterNumber} in ${directory}`);
 }
 
 async function downloadCoverImage(coverUrl, directory, sendUpdate) {
@@ -101,14 +104,6 @@ async function createEpub(title, author, directory, sendUpdate) {
         return { title: chapterTitle, data: content.replace(/<h1.*?>(.*?)<\/h1>/, '') };
     });
 
-
-   // Adding the title page with embedded cover image
-   const titlePageContent = `
-       <h1>${title}</h1>
-       <h2>${author}</h2>
-       <img src="/public/${directory}/cover.jpg" style="width: 100%; object-fit: cover;" alt="${title} Cover Image">
-   `;
-   chapters.unshift({ title: `${title} - ${author}`, data: titlePageContent });
     
     // Step 4: Create options object
     const options = {
@@ -150,31 +145,45 @@ async function downloadChapters(title, author, startUrl, chapterRange, coverUrl,
         const lastFile = fs.readFileSync(path.join(directory, `chapter_${chapterNumber}.html`), 'utf-8');
         const $ = cheerio.load(lastFile);
         const nextChapterLink = $('a[rel="next"]');
-        if (nextChapterLink.length) {
+        // link may contain javascript:; if so, we'll mark it as completed.
+        if (nextChapterLink.length && nextChapterLink !== "javascript:;") {
             url = new URL(nextChapterLink.attr('href'), startUrl).toString();
         } else {
-            sendUpdate("No next chapter link found in the last downloaded chapter. Exiting...");
+            sendUpdate("Done Downloading Chapters...");
             return;
         }
     }
 
     while (url && chapterNumber <= endChapter) {
+        // update books.json with last good url (replace ch1)
+        const books = JSON.parse(fs.readFileSync('books.json', 'utf8'));
+        const book = books.find(book => book.title === title);
+        if (book) {
+            if(url != "javascript:;") {
+            book.ch1 = url;
+            fs.writeFileSync('books.json', JSON.stringify(books, null, 2));
+        }
+        }
         if (chapterNumber >= startChapter) {
-            sendUpdate(`Fetching Chapter ${chapterNumber} from ${url}`);
-            const [chapterText, nextUrl] = await fetchChapter(url, sendUpdate);
-            if (chapterText) {
-                saveChapter(chapterText, chapterNumber, directory, sendUpdate);
+            if(url !== "javascript:;") { 
+                const [chapterText, nextUrl] = await fetchChapter(url, sendUpdate);
+                if (chapterText) {
+                    saveChapter(chapterText, chapterNumber, directory, sendUpdate);
+                } else {
+                    sendUpdate("Failed to fetch chapter content. Exiting...");
+                    break;
+                }
+
+                if (!nextUrl) {
+                    sendUpdate("No next chapter found. Exiting...");
+                    break;
+                }
+
+                url = nextUrl;
             } else {
-                sendUpdate("Failed to fetch chapter content. Exiting...");
+                sendUpdate("Downloading Chapters Completed...");
                 break;
             }
-
-            if (!nextUrl) {
-                sendUpdate("No next chapter found. Exiting...");
-                break;
-            }
-
-            url = nextUrl;
         } else {
             sendUpdate(`Skipping Chapter ${chapterNumber}`);
         }
@@ -191,7 +200,8 @@ async function getTitlePage(url, sendUpdate) {
         const response = await axios.get(url, { headers });
         const $ = cheerio.load(response.data);
         const title = $('h1.novel-title.text2row').text().trim();
-        const author = $('div.author').text().trim();
+        // author contains a lot of whitespace and \n. Needs to be trimmed up
+        const author = $('div.author').text().replace("Author:", "").replace(/\n+/g, '').trim();
 
         // need root url in case of relative links
         const rootUrl = new URL(url).origin;
@@ -199,12 +209,14 @@ async function getTitlePage(url, sendUpdate) {
         const coverUrl = $('figure.cover img').attr('data-src');
         // chapterCount comes from the first span in the following: <div class="header-stats"><span><strong><i class="icon-book-open"></i> 192</strong><small>Chapters</small></span><span><strong><i class="icon-eye"></i> 138K</strong><small>Views</small></span><span><strong><i class="icon-bookmark"></i> 2.21K</strong><small>Bookmarked</small></span><span><strong class="ongoing">Ongoing</strong><small>Status</small></span></div>
         const chapterCount = $('div.header-stats span strong').text().trim().split(' ')[0];
+        // status comes from the last span in the following: <div class="header-stats"><span><strong><i class="icon-book-open"></i> 192</strong><small>Chapters</small></span><span><strong><i class="icon-eye"></i> 138K</strong><small>Views</small></span><span><strong><i class="icon-bookmark"></i> 2.21K</strong><small>Bookmarked</small></span><span><strong class="ongoing">Ongoing</strong><small>Status</small></span></div>
+        const status = $('div.header-stats span:last-child').text().replace("Status", "").trim();
 
-        sendUpdate(`Successfully fetched title page: ${title}, ${author}, ${startUrl}, ${coverUrl}`);
-        return [title, author, startUrl, coverUrl, chapterCount];
+        sendUpdate(`Successfully fetched title page: ${title}, ${author}, ${startUrl}, ${coverUrl}, ${chapterCount}, ${status}`);
+        return [title, author, startUrl, coverUrl, chapterCount, status];
     } catch (error) {
         sendUpdate(`Failed to fetch title page: ${error}`);
-        return [null, null, null, null];
+        return [null, null, null, null, null, null];
     }
 }
 
@@ -251,7 +263,7 @@ app.post('/download', (req, res) => {
 
         // grab title page
         sendUpdate('Grabbing title page...');
-        getTitlePage(startUrl, sendUpdate).then(([title, author, ch1, coverUrl, totalChapters]) => {
+        getTitlePage(startUrl, sendUpdate).then(([title, author, ch1, coverUrl, totalChapters, status]) => {
             if (title) {
                 // count how many chapters are in the existing folder (if it exists). If totalChapters == how many chapters exist already, don't download anything.
                 const directory = title.replace(' ', '_');
@@ -260,10 +272,41 @@ app.post('/download', (req, res) => {
                     fs.mkdirSync("public/" + directory);
                 }
 
+                // check books.json to see if the book already exists, if not, add the title, author, coverUrl, totalChapters, and ch1 to the books.json
+                // confirm books.json exists, if not create it.
+                if (!fs.existsSync('books.json')) {
+                    fs.writeFileSync('books.json', '[]');
+                }
+                const books = JSON.parse(fs.readFileSync('books.json', 'utf8'));
+                const existingBook = books.find(book => book.title === title);
+                if (!existingBook) {
+                    books.push({ title, author, coverUrl, totalChapters, ch1, status });
+                    fs.writeFileSync('books.json', JSON.stringify(books, null, 2));
+                } else {
+                    if(existingBook.ch1 !== ch1) {
+                        ch1 = existingBook.ch1;
+                    }
+                }
+
                 const existingFiles = fs.readdirSync(path.join("public", directory));
                 const existingChapters = existingFiles.filter(file => file.startsWith('chapter_') && file.endsWith('.html')).length;
                 if (existingChapters >= totalChapters) {
-                    sendUpdate(`Up to date. Download here: <a href="/public/${directory}/${title}.epub">${title}</a>`);
+                    // check to see if epub exists, if not compile it
+                    if (!fs.existsSync(path.join("public", directory, `${title}.epub`))) {
+                        // confirm if cover exists
+                        if (!fs.existsSync(path.join("public", directory, "cover.jpg"))) {
+                            downloadCoverImage(coverUrl, directory, sendUpdate);
+                            createEpub(title, author, directory, sendUpdate).then(() => {
+                                sendUpdate(`Up to date. Download here: <a href="/public/${directory}/${title}.epub">${title}</a>`);
+                            });
+                        } else {
+                            createEpub(title, author, directory, sendUpdate).then(() => {
+                                sendUpdate(`Up to date. Download here: <a href="/public/${directory}/${title}.epub">${title}</a>`);
+                            });
+                        }
+                    } else {
+                        sendUpdate(`Up to date. Download here: <a href="/public/${directory}/${title}.epub">${title}</a>`);
+                    }
                     return;
                 }
                 
