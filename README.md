@@ -3,12 +3,12 @@
 WebNovelScraper is a Node.js application to automatically download chapters from web novels as they become available and compile them into an EPUB format.
 
 ## Supported Sites:
-webnovelpub.pro
-webnovelpub.co
-lightnovelworld.co
-lightnovelworld.com
-lightnovelhub.org
-lightnovelpub.com
+- webnovelpub.pro
+- webnovelpub.co
+- lightnovelworld.co
+- lightnovelworld.com
+- lightnovelhub.org
+- lightnovelpub.com
 
 ## Features
 
@@ -17,11 +17,13 @@ lightnovelpub.com
 - Compiles fetched chapters into an EPUB.
 - Real-time updates via WebSocket.
 - Simple Web UI for starting and monitoring download progress.
+- Fetches new chapters automagically through /cron endpoint
 
 ## Prerequisites
 
 - Node.js (compatible with the latest version)
 - npm (Node package manager)
+- Cron (optional, if you want to automatically fetch new chapters)
 
 ## Installation
 
@@ -43,7 +45,7 @@ lightnovelpub.com
 1. Start the server:
 
     ```bash
-    npm start
+    node novel.js
     ```
 
 2. Open your browser and navigate to http://localhost:3000.
@@ -59,6 +61,7 @@ lightnovelpub.com
 - `public/`: Contains static files, including downloaded chapters and cover images.
 - `views/`: Contains EJS templates for rendering the web interface.
 - `index.js`: Main Node.js script.
+- `books.json`: Created on first web novel scraping to help crons run
 
 ### Main Components
 
@@ -73,6 +76,7 @@ lightnovelpub.com
 - `GET /`: Serves the main web interface.
 - `POST /download`: Initiates the download process using the provided start URL.
 - `GET /books`: Used to generate a JSON file of books in `public` directory
+- `GET /cron`: Used to look for ongoing webnovels and download the latest chapters of each.
 
 ### Functions
 
@@ -83,13 +87,13 @@ lightnovelpub.com
 - `downloadChapters(title, author, startUrl, chapterRange, coverUrl, sendUpdate)`: Manages the download process for the chapters.
 - `getTitlePage(url, sendUpdate)`: Fetches the title page to extract novel metadata.
 
+
 ## Example
 
 To download a novel, use its start URL in the web interface, for example:
 
 ```
-Title Page: 
-https://example.com/novel/123/
+Title Page: https://example.com/novel/123/
 ```
 
 ## Contributing
