@@ -288,6 +288,7 @@ app.post('/download', (req, res) => {
         sendUpdate('Grabbing title page...');
         getTitlePage(startUrl, sendUpdate).then(([title, author, ch1, coverUrl, totalChapters, status]) => {
             if (title) {
+                client.send(JSON.stringify({ bookInfo: { title, author, coverUrl, totalChapters, ch1, status } }));
                 // count how many chapters are in the existing folder (if it exists). If totalChapters == how many chapters exist already, don't download anything.
                 const directory = title.replace(' ', '_');
 
@@ -300,6 +301,7 @@ app.post('/download', (req, res) => {
                 if (!fs.existsSync('books.json')) {
                     fs.writeFileSync('books.json', '[]');
                 }
+
                 const books = JSON.parse(fs.readFileSync('books.json', 'utf8'));
                 const existingBook = books.find(book => book.title === title);
                 if (!existingBook) {
@@ -310,6 +312,8 @@ app.post('/download', (req, res) => {
                         ch1 = existingBook.ch1;
                     }
                 }
+
+
 
                 const existingFiles = fs.readdirSync(path.join("public", directory));
                 const existingChapters = existingFiles.filter(file => file.startsWith('chapter_') && file.endsWith('.html')).length;

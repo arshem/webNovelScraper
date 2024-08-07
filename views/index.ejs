@@ -83,6 +83,7 @@
         </form>
 
         <h2>Status:</h2>
+        <div id="progress"><progress id="progressbar" value="0" max="100" style="width: 100%;height: 50px;"></progress></div>
         <div id="status" class="status-container"></div>
     </div>
     <div class="container" id="library">
@@ -96,6 +97,7 @@
     <script>
         const statusDiv = document.getElementById('status');
         const clientIdInput = document.getElementById('clientId');
+        const progress = document.getElementById('progressbar');
 
         const ws = new WebSocket(`wss://${window.location.host}`);
         ws.onmessage = (event) => {
@@ -108,6 +110,10 @@
                 newStatus.className = "mt-2 alert alert-info";
                 statusDiv.appendChild(newStatus);
                 statusDiv.scrollTop = statusDiv.scrollHeight; // Scroll to the bottom
+                progress.value++;
+            } else if (data.bookInfo) {
+                // update progress bar max value from bookInfo.totalChapters
+                progress.max = data.bookInfo.totalChapters;
             }
         };
 
@@ -132,6 +138,7 @@
                 newStatus.className = "mt-2 alert alert-info";
                 statusDiv.appendChild(newStatus);
                 statusDiv.scrollTop = statusDiv.scrollHeight; // Scroll to the bottom
+
             });
         };
 
