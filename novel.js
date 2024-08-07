@@ -102,13 +102,13 @@ async function createEpub(title, author, directory, sendUpdate) {
     });
 
 
-    // prepend chapters with a title page that uses the cover image too
-    chapters.unshift(
-    { 
-        title: `${title} - ${author}`, 
-        data: `${title} <img src="cover.jpeg" style="width: 100%; object-fit: cover;">${author}` 
-    }
-    );
+   // Adding the title page with embedded cover image
+   const titlePageContent = `
+       <h1>${title}</h1>
+       <h2>${author}</h2>
+       <img src="/public/${directory}/cover.jpg" style="width: 100%; object-fit: cover;" alt="${title} Cover Image">
+   `;
+   chapters.unshift({ title: `${title} - ${author}`, data: titlePageContent });
     
     // Step 4: Create options object
     const options = {
@@ -211,6 +211,33 @@ async function getTitlePage(url, sendUpdate) {
 app.get('/', (req, res) => {
     res.render('index');
 });
+
+app.get("/books", (req, res) => {
+    fs.readdir("public", { withFileTypes: true }, (err, files) => {
+        if (err) {
+            return res.status(500).send("Unable to scan directory");
+        }
+
+        const books = files
+        .filter(dirent => dirent.isDirectory())
+        .map(dirent => {
+            const bookTitle = dirent.name.replace(/_/g, " ");
+            return {
+                title: bookTitle,
+                cover: `/public/${dirent.name}/cover.jpg`,
+                epub: `/public/${dirent.name}/${bookTitle}.epub`
+            };
+        });      
+
+        // Sort books alphabetically by title
+        books.sort((a, b) => a.title.localeCompare(b.title));
+
+        res.json(books);
+    });
+});
+
+app.use("/public", express.static("public"));
+
 
 app.post('/download', (req, res) => {
     const { startUrl } = req.body;
