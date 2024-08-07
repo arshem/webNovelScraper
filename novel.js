@@ -129,6 +129,9 @@ async function createEpub(title, author, directory, sendUpdate) {
 async function downloadChapters(title, author, startUrl, chapterRange, coverUrl, sendUpdate) {
     let url = startUrl;
     let chapterNumber = 1;
+    if(sendUpdate === null) {
+        sendUpdate = (message) => { console.log(message)};
+    }
     const [startChapter, endChapter] = chapterRange ? chapterRange.split('-').map(Number) : [1, Infinity];
     const directory = title.replace(' ', '_');
     
@@ -250,6 +253,26 @@ app.get("/books", (req, res) => {
 
 app.use("/public", express.static("public"));
 
+app.get("/cron", (req, res) => {
+    // This is to check books.json for any status of "ongoing" for any new chapters by looking at the ch1 url, then run downloadChapters function
+    fs.readFile('books.json', 'utf8', (err, data) => {
+        if (err) {
+            console.error(err);
+            return;
+        }
+        const books = JSON.parse(data);
+        books.forEach(book => {
+            if (book.status == "Ongoing") {
+                console.log(`Checking ${book.title} for new chapters...`);
+                downloadChapters(book.title, book.author, book.ch1, null, book.coverUrl, null);
+            } else {
+                console.log(`Skipping ${book.title} because it is not ongoing.`);
+            }
+        })
+    })
+
+    res.status(200).json({ message: 'Cron job done' });
+})
 
 app.post('/download', (req, res) => {
     const { startUrl } = req.body;
