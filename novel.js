@@ -129,9 +129,11 @@ async function createEpub(title, author, directory, sendUpdate) {
 async function downloadChapters(title, author, startUrl, chapterRange, coverUrl, sendUpdate) {
     let url = startUrl;
     let chapterNumber = 1;
+
     if(sendUpdate === null) {
         sendUpdate = (message) => { console.log(message)};
     }
+
     const [startChapter, endChapter] = chapterRange ? chapterRange.split('-').map(Number) : [1, Infinity];
     const directory = title.replace(' ', '_');
     
@@ -171,6 +173,7 @@ async function downloadChapters(title, author, startUrl, chapterRange, coverUrl,
             if(url !== "javascript:;") { 
                 const [chapterText, nextUrl] = await fetchChapter(url, sendUpdate);
                 if (chapterText) {
+                    doGen = true;
                     saveChapter(chapterText, chapterNumber, directory, sendUpdate);
                 } else {
                     sendUpdate("Failed to fetch chapter content. Exiting...");
@@ -196,6 +199,7 @@ async function downloadChapters(title, author, startUrl, chapterRange, coverUrl,
 
     await downloadCoverImage(coverUrl, directory, sendUpdate);
     await createEpub(title, author, directory, sendUpdate);
+
 }
 
 async function getTitlePage(url, sendUpdate) {
@@ -203,20 +207,16 @@ async function getTitlePage(url, sendUpdate) {
         const response = await axios.get(url, { headers });
         const $ = cheerio.load(response.data);
         const title = $('h1.novel-title.text2row').text().trim();
-        // author contains a lot of whitespace and \n. Needs to be trimmed up
         const author = $('div.author').text().replace("Author:", "").replace(/\n+/g, '').trim();
 
-        // need root url in case of relative links
         const rootUrl = new URL(url).origin;
         const startUrl = new URL($('a#readchapterbtn').attr('href'), rootUrl).toString();
         const coverUrl = $('figure.cover img').attr('data-src');
-        // chapterCount comes from the first span in the following: <div class="header-stats"><span><strong><i class="icon-book-open"></i> 192</strong><small>Chapters</small></span><span><strong><i class="icon-eye"></i> 138K</strong><small>Views</small></span><span><strong><i class="icon-bookmark"></i> 2.21K</strong><small>Bookmarked</small></span><span><strong class="ongoing">Ongoing</strong><small>Status</small></span></div>
         const chapterCount = $('div.header-stats span strong').text().trim().split(' ')[0];
-        // status comes from the last span in the following: <div class="header-stats"><span><strong><i class="icon-book-open"></i> 192</strong><small>Chapters</small></span><span><strong><i class="icon-eye"></i> 138K</strong><small>Views</small></span><span><strong><i class="icon-bookmark"></i> 2.21K</strong><small>Bookmarked</small></span><span><strong class="ongoing">Ongoing</strong><small>Status</small></span></div>
         const status = $('div.header-stats span:last-child').text().replace("Status", "").trim();
 
         sendUpdate(`Successfully fetched title page: ${title}, ${author}, ${startUrl}, ${coverUrl}, ${chapterCount}, ${status}`);
-        return [title, author, startUrl, coverUrl, chapterCount, status];
+        return [title, author, startUrl, coverUrl, chapterCount, status, url];
     } catch (error) {
         sendUpdate(`Failed to fetch title page: ${error}`);
         return [null, null, null, null, null, null];
@@ -254,6 +254,10 @@ app.get("/books", (req, res) => {
 app.use("/public", express.static("public"));
 
 app.get("/cron", (req, res) => {
+
+    const sendUpdate = (message) => {
+        console.log(message);
+    };
     // This is to check books.json for any status of "ongoing" for any new chapters by looking at the ch1 url, then run downloadChapters function
     fs.readFile('books.json', 'utf8', (err, data) => {
         if (err) {
@@ -264,7 +268,26 @@ app.get("/cron", (req, res) => {
         books.forEach(book => {
             if (book.status == "Ongoing") {
                 console.log(`Checking ${book.title} for new chapters...`);
-                downloadChapters(book.title, book.author, book.ch1, null, book.coverUrl, null);
+                // count number of files in the directory (replace spaces with underscores), and if the count is less than the total chapters, then run downloadChapters
+                const bookTitle = book.title.replace(' ', '_');
+                const dirPath = path.join("public", bookTitle);
+                const files = fs.readdirSync(dirPath).filter(file => file.startsWith('chapter_') && file.endsWith('.html'));
+                // update totalChapters in books.json
+
+                // get new totalChapters from getTitlePage
+                getTitlePage(book.url, sendUpdate).then(([title, author, startUrl, coverUrl, totalChapters, status, url]) => {
+                    // update books.json with new chapter count, just in case it does change
+                    book.totalChapters = totalChapters;
+                    fs.writeFileSync('books.json', JSON.stringify(books, null, 2));
+                    console.log(`${book.title}: \n Found ${files.length} files.\n Total chapters: ${book.totalChapters}\n`);
+                    if (files.length < book.totalChapters) {
+                        downloadChapters(book.title, book.author, book.ch1, null, book.coverUrl, null);
+                    } else {
+                        console.log(`Skipping ${book.title} because it is up to date.`);
+                    }
+    
+                })
+                //downloadChapters(book.title, book.author, book.ch1, null, book.coverUrl, null);
             } else {
                 console.log(`Skipping ${book.title} because it is not ongoing.`);
             }
@@ -286,9 +309,9 @@ app.post('/download', (req, res) => {
 
         // grab title page
         sendUpdate('Grabbing title page...');
-        getTitlePage(startUrl, sendUpdate).then(([title, author, ch1, coverUrl, totalChapters, status]) => {
+        getTitlePage(startUrl, sendUpdate).then(([title, author, ch1, coverUrl, totalChapters, status, url]) => {
             if (title) {
-                client.send(JSON.stringify({ bookInfo: { title, author, coverUrl, totalChapters, ch1, status } }));
+                client.send(JSON.stringify({ bookInfo: { title, author, coverUrl, totalChapters, ch1, status, url } }));
                 // count how many chapters are in the existing folder (if it exists). If totalChapters == how many chapters exist already, don't download anything.
                 const directory = title.replace(' ', '_');
 
@@ -305,7 +328,7 @@ app.post('/download', (req, res) => {
                 const books = JSON.parse(fs.readFileSync('books.json', 'utf8'));
                 const existingBook = books.find(book => book.title === title);
                 if (!existingBook) {
-                    books.push({ title, author, coverUrl, totalChapters, ch1, status });
+                    books.push({ title, author, coverUrl, totalChapters, ch1, status, url });
                     fs.writeFileSync('books.json', JSON.stringify(books, null, 2));
                 } else {
                     if(existingBook.ch1 !== ch1) {
