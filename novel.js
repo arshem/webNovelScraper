@@ -234,7 +234,10 @@ app.get("/books", (req, res) => {
             console.error(err);
             return;
         }
-        res.status(200).json(JSON.parse(data));
+        // sort books by updated date
+        const books = JSON.parse(data);
+        books.sort((a, b) => new Date(b.updated) - new Date(a.updated));
+        res.status(200).json(books);
     });
 });
 
