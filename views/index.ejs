@@ -151,25 +151,25 @@
                 console.log(books);
                 books.forEach(book => {
                     // check to see if the epub actually exists using standard javascript
-                    checkFileExists(book.epub, (exists) => {
+                    let epub = "public/" + book.title.replace(" ","_") + "/"+book.title+".epub";
+                    checkFileExists(epub, (exists) => {
                         if (!exists) {
                             return;
                         }
                         
-                    
                         const bookDiv = document.createElement("div");
                         bookDiv.classList.add("book");
                         
                         const img = document.createElement("img");
                         // Add the cover image here include root url
                         img.classList.add("book-cover");
-                        img.src = book.cover;
+                        img.src = book.coverUrl;
                         img.alt = book.title;
-                        img.addEventListener("click", () => window.location.href = book.epub);
+                        img.addEventListener("click", () => window.location.href = epub);
                         
                         const title = document.createElement("div");
                         title.classList.add("book-title");
-                        title.textContent = book.title;
+                        title.innerHTML = book.title+ "<br />Last Updated: " + book.updated;
                         
                         bookDiv.appendChild(img);
                         bookDiv.appendChild(title);

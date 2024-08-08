@@ -228,26 +228,13 @@ app.get('/', (req, res) => {
 });
 
 app.get("/books", (req, res) => {
-    fs.readdir("public", { withFileTypes: true }, (err, files) => {
+    // get books from books.json
+    fs.readFile('books.json', 'utf8', (err, data) => {
         if (err) {
-            return res.status(500).send("Unable to scan directory");
+            console.error(err);
+            return;
         }
-
-        const books = files
-        .filter(dirent => dirent.isDirectory())
-        .map(dirent => {
-            const bookTitle = dirent.name.replace(/_/g, " ");
-            return {
-                title: bookTitle,
-                cover: `/public/${dirent.name}/cover.jpg`,
-                epub: `/public/${dirent.name}/${bookTitle}.epub`
-            };
-        });      
-
-        // Sort books alphabetically by title
-        books.sort((a, b) => a.title.localeCompare(b.title));
-
-        res.json(books);
+        res.status(200).json(JSON.parse(data));
     });
 });
 
@@ -277,11 +264,21 @@ app.get("/cron", (req, res) => {
                 // get new totalChapters from getTitlePage
                 getTitlePage(book.url, sendUpdate).then(([title, author, startUrl, coverUrl, totalChapters, status, url]) => {
                     // update books.json with new chapter count, just in case it does change
-                    book.totalChapters = totalChapters;
-                    fs.writeFileSync('books.json', JSON.stringify(books, null, 2));
+                    if(book.totalChapters != totalChapters) {
+                        const date = new Date();
+                        const year = date.getFullYear();
+                        const month = String(date.getMonth() + 1).padStart(2, '0');
+                        const day = String(date.getDate()).padStart(2, '0');
+                        const updatedDate = `${year}-${month}-${day}`;
+    
+                        book.totalChapters = totalChapters;
+                        book.updated = updatedDate
+                        fs.writeFileSync('books.json', JSON.stringify(books, null, 2));
+                    }
                     console.log(`${book.title}: \n Found ${files.length} files.\n Total chapters: ${book.totalChapters}\n`);
                     if (files.length < book.totalChapters) {
                         downloadChapters(book.title, book.author, book.ch1, null, book.coverUrl, null);
+
                     } else {
                         console.log(`Skipping ${book.title} because it is up to date.`);
                     }
@@ -328,7 +325,12 @@ app.post('/download', (req, res) => {
                 const books = JSON.parse(fs.readFileSync('books.json', 'utf8'));
                 const existingBook = books.find(book => book.title === title);
                 if (!existingBook) {
-                    books.push({ title, author, coverUrl, totalChapters, ch1, status, url });
+                    const date = new Date();
+                    const year = date.getFullYear();
+                    const month = String(date.getMonth() + 1).padStart(2, '0');
+                    const day = String(date.getDate()).padStart(2, '0');
+                    const updated = `${year}-${month}-${day}`;
+                    books.push({ title, author, coverUrl, totalChapters, ch1, status, url, updated });
                     fs.writeFileSync('books.json', JSON.stringify(books, null, 2));
                 } else {
                     if(existingBook.ch1 !== ch1) {
