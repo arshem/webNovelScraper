@@ -27,23 +27,32 @@ async function fetchChapter(url, sendUpdate) {
             const response = await axios.get(url, { headers });
             const $ = cheerio.load(response.data);
 
-            const chapterTitle = $('.chapter-title').text().trim() || 'Untitled Chapter';
-            const chapterContainer = $('#chapter-container');
-            
-            if (!chapterContainer.length) {
-                sendUpdate(`Could not find the chapter content in ${url}`);
-                return [null, null];
+            if(url.includes("royalroad")) {
+                const chapterTitle = $('body > div.page-container > div > div > div > div > div.row.fic-header.margin-bottom-40 > div > div.col-md-5.col-lg-6.col-md-offset-1.text-center.md-text-left > h1').text().trim();
+                const chapterContainer = $('.chapter-content')
+                const nextChapterLink = $('div.portlet-body > div.row.nav-buttons > div.col-xs-6.col-md-4.col-md-offset-4.col-lg-3.col-lg-offset-6 > a').attr('href');
+                const nextChapterUrl = nextChapterLink.length ? new URL(nextChapterLink, url).toString() : null;
+
+                const chapterText = `<h1>${chapterTitle}</h1>\n${chapterContainer.html()}`;
+
+                sendUpdate(`Successfully fetched chapter: "${chapterTitle}"`);
+
+                return [chapterText, nextChapterUrl];
+            } else {
+                const chapterTitle = $('.chapter-title').text().trim() || 'Untitled Chapter';
+                const chapterContainer = $('#chapter-container');
+                const nextChapterLink = $('a[rel="next"]').attr('href');
+                const nextChapterUrl = nextChapterLink.length ? new URL(nextChapterLink, url).toString() : null;
+
+                const chapterText = `<h1>${chapterTitle}</h1>\n${chapterContainer.html()}`;
+
+                sendUpdate(`Successfully fetched chapter: "${chapterTitle}"`);
+
+                return [chapterText, nextChapterUrl];
             }
 
-            const chapterText = `<h1>${chapterTitle}</h1>\n${chapterContainer.html()}`;
-            sendUpdate(`Successfully fetched chapter: "${chapterTitle}"`);
-
-            const nextChapterLink = $('a[rel="next"]');
-            const nextChapterUrl = nextChapterLink.length ? new URL(nextChapterLink.attr('href'), url).toString() : null;
-
-            return [chapterText, nextChapterUrl];
         } catch (error) {
-            sendUpdate(`Failed to fetch chapter from ${url}: ${error}`);
+            sendUpdate(`Failed to fetch chapter content from ${url}: ${error}`);
             return [null, null];
         }
     } else {
@@ -147,7 +156,7 @@ function extractChapterNumber(chapterText) {
     if (chapterMatch) {
         return parseFloat(chapterMatch[1]);
     } else {
-        console.log("Failed to extract chapter number", chapterMatch);
+        return chapterHeading.match(/\d+(\.\d+)?/i);
     }
     return null;
 }
@@ -177,7 +186,13 @@ async function downloadChapters(title, author, startUrl, coverUrl, sendUpdate) {
         chapterNumber -= 1;
         const lastFile = fs.readFileSync(path.join("public", directory, `chapter_${chapterNumber}.html`), 'utf-8');
         const $ = cheerio.load(lastFile);
-        const nextChapterLink = $('a[rel="next"]').attr('href');
+        if(startUrl.includes("royalroad")){
+            // Find the next chapter link in body > div.page-container > div > div > div > div > div.portlet.light.chapter.font-size-14.width-100.font-family-default.indent-default.paragraph-spacing-30 > div.portlet-body > div.row.nav-buttons > div.col-xs-6.col-md-4.col-md-offset-4.col-lg-3.col-lg-offset-6 > a
+            const nextChapterLink = $('div.portlet-body > div.row.nav-buttons > div.col-xs-6.col-md-4.col-md-offset-4.col-lg-3.col-lg-offset-6 > a').attr('href');
+            console.log("Next Chapter: ", nextChapterLink);
+        } else {
+            const nextChapterLink = $('a[rel="next"]').attr('href');
+        }
 
         if (nextChapterLink && nextChapterLink !== "javascript:;") {
             url = new URL(nextChapterLink, startUrl).toString();
@@ -227,23 +242,52 @@ async function downloadChapters(title, author, startUrl, coverUrl, sendUpdate) {
 }
 
 async function getTitlePage(url, sendUpdate) {
-    try {
-        const response = await axios.get(url, { headers });
-        const $ = cheerio.load(response.data);
-        const title = $('h1.novel-title.text2row').text().trim();
-        const author = $('div.author').text().replace("Author:", "").replace(/\n+/g, '').trim();
 
-        const rootUrl = new URL(url).origin;
-        const startUrl = new URL($('a#readchapterbtn').attr('href'), rootUrl).toString();
-        const coverUrl = $('figure.cover img').attr('data-src');
-        const chapterCount = $('div.header-stats span strong').text().trim().split(' ')[0];
-        const status = $('div.header-stats span:last-child').text().replace("Status", "").trim();
+    if (url.includes("royalroad")) {
+        try {
+            const response = await axios.get(url, { headers });
+            const $ = cheerio.load(response.data);
+            const title = $('div.page-content-inner > div > div.row.fic-header > div.col-md-5.col-lg-6.text-center.md-text-left.fic-title > div > h1').text().trim();
+            const author = $('div.page-content-inner > div > div.row.fic-header > div.col-md-5.col-lg-6.text-center.md-text-left.fic-title > div > h4 > span:nth-child(2)').text().trim();
+            sendUpdate(`Successfully fetched title page: ${title}, ${author}`);
 
-        sendUpdate(`Successfully fetched title page: ${title}, ${author}, ${startUrl}, ${coverUrl}, ${chapterCount}, ${status}`);
-        return [title, author, startUrl, coverUrl, chapterCount, status, url];
-    } catch (error) {
-        sendUpdate(`Failed to fetch title page: ${error}`);
-        return [null, null, null, null, null, null];
+            const rootUrl = new URL(url).origin;
+            const status = $('div.page-content-inner > div > div.fiction.row > div > div.fiction-info > div.portlet.light.row > div.col-md-8 > div.margin-bottom-10 > span:nth-child(2)').text().trim();
+            if(status=="STUB")
+            {
+                sendUpdate("This book seems to have chapters missing due to the author removing them...this could mean that they removed them in adherance to 3rd party requirements.")
+                return [null, null, null, null, null, null, null];
+            }
+            const startUrl = new URL($('div.page-content-inner > div > div.row.fic-header > div.col-md-4.col-lg-3.fic-buttons.text-center.md-text-left > a').attr('href'), rootUrl).toString();
+            const coverUrl = $('body > div.page-container > div > div > div > div.page-content-inner > div > div.row.fic-header > div.col-md-3.text-center.cover-col > div > img').attr('src');
+            const chapterCount = $('div.page-content-inner > div > div.fiction.row > div > div.fiction-info > div:nth-child(5) > div.portlet-title > div.actions > span').text().replace(" Chapters", "").trim();
+            
+            sendUpdate(`title: ${title}, author: ${author}, url: ${url}, coverUrl: ${coverUrl}, chapterCount: ${chapterCount}, status: ${status}, startUrl: ${startUrl}`);
+
+            return [title, author, startUrl, coverUrl, chapterCount, status, url];
+        } catch (error) {
+            sendUpdate(`Failed to fetch title page: ${error}`);
+            return [null, null, null];
+        }
+    } else {
+        try {
+            const response = await axios.get(url, { headers });
+            const $ = cheerio.load(response.data);
+            const title = $('h1.novel-title.text2row').text().trim();
+            const author = $('div.author').text().replace("Author:", "").replace(/\n+/g, '').trim();
+
+            const rootUrl = new URL(url).origin;
+            const startUrl = new URL($('a#readchapterbtn').attr('href'), rootUrl).toString();
+            const coverUrl = $('figure.cover img').attr('data-src');
+            const chapterCount = $('div.header-stats span strong').text().trim().split(' ')[0];
+            const status = $('div.header-stats span:last-child').text().replace("Status", "").trim();
+
+            sendUpdate(`Successfully fetched title page: ${title}, ${author}, ${startUrl}, ${coverUrl}, ${chapterCount}, ${status}`);
+            return [title, author, startUrl, coverUrl, chapterCount, status, url];
+        } catch (error) {
+            sendUpdate(`Failed to fetch title page: ${error}`);
+            return [null, null, null, null, null, null];
+        }
     }
 }
 
@@ -388,7 +432,7 @@ app.post('/download', (req, res) => {
                     }
                     return;
                 }
-                
+                console.log("Ch1: ", ch1);
                 downloadChapters(title, author, ch1, coverUrl, sendUpdate).then(() => {
                     sendUpdate('Process Complete');
                 });
