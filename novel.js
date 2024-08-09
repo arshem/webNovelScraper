@@ -53,8 +53,23 @@ async function fetchChapter(url, sendUpdate) {
 }
 
 function saveChapter(content, chapterNumber, directory, sendUpdate) {
-    const filename = path.join("public/"+directory, `chapter_${chapterNumber}.html`);
-    fs.writeFileSync(filename, content, 'utf-8');
+    const filename = path.join("public", directory, `chapter_${chapterNumber}.html`);
+    
+    // Log the filename to ensure the path is correct.
+    console.log(`Saving to: ${filename}`);
+
+    try {
+        // Ensure the directory exists.
+        if (!fs.existsSync(path.join("public", directory))) {
+            fs.mkdirSync(path.join("public", directory), { recursive: true });
+        }
+        
+        fs.writeFileSync(filename, content, 'utf-8');
+        sendUpdate(`Chapter ${chapterNumber} saved successfully in ${directory}.`);
+    } catch (error) {
+        sendUpdate(`Failed to save chapter ${chapterNumber}: ${error.message}`);
+        return;
+    }
 }
 
 async function downloadCoverImage(coverUrl, directory, sendUpdate) {
@@ -125,81 +140,89 @@ async function createEpub(title, author, directory, sendUpdate) {
     }
 }
 
+// Utility to extract chapter number from chapter text
+function extractChapterNumber(chapterText) {
+    const $ = cheerio.load(chapterText);
+    const chapterHeading = $('h1').text();  // Assuming chapter heading has an <h1> tag
 
-async function downloadChapters(title, author, startUrl, chapterRange, coverUrl, sendUpdate) {
+    const chapterMatch = chapterHeading.match(/Chapter\s+(\d+)/i);
+    if (chapterMatch) {
+        return parseInt(chapterMatch[1], 10);
+    }
+    return null;
+}
+
+
+async function downloadChapters(title, author, startUrl, coverUrl, sendUpdate) {
     let url = startUrl;
     let chapterNumber = 1;
 
-    if(sendUpdate === null) {
-        sendUpdate = (message) => { console.log(message)};
+    if (!sendUpdate) {
+        sendUpdate = (message) => { console.log(message) };
     }
 
-    const [startChapter, endChapter] = chapterRange ? chapterRange.split('-').map(Number) : [1, Infinity];
-    const directory = title.replace(' ', '_');
-    
-    if (!fs.existsSync("public/" + directory)) {
-        fs.mkdirSync("public/" + directory);
+    const directory = title.replace(/\s+/g, '_');  // Replace spaces with underscores
+    console.log(`Directory: ${directory}`);
+    if (!fs.existsSync(path.join("public", directory))) {
+        fs.mkdirSync(path.join("public", directory));
     }
 
-    while (fs.existsSync(path.join(directory, `chapter_${chapterNumber}.html`))) {
+    // Find the last saved chapter to continue downloading from there
+    while (fs.existsSync(path.join("public", directory, `chapter_${chapterNumber}.html`))) {
         chapterNumber += 1;
     }
 
+    // Deduct 1, because the loop above increments before the last valid chapter check
     if (chapterNumber > 1) {
         chapterNumber -= 1;
-        const lastFile = fs.readFileSync(path.join(directory, `chapter_${chapterNumber}.html`), 'utf-8');
+        const lastFile = fs.readFileSync(path.join("public", directory, `chapter_${chapterNumber}.html`), 'utf-8');
         const $ = cheerio.load(lastFile);
-        const nextChapterLink = $('a[rel="next"]');
-        // link may contain javascript:; if so, we'll mark it as completed.
-        if (nextChapterLink.length && nextChapterLink !== "javascript:;") {
-            url = new URL(nextChapterLink.attr('href'), startUrl).toString();
+        const nextChapterLink = $('a[rel="next"]').attr('href');
+
+        if (nextChapterLink && nextChapterLink !== "javascript:;") {
+            url = new URL(nextChapterLink, startUrl).toString();
         } else {
             sendUpdate("Done Downloading Chapters...");
             return;
         }
     }
 
-    while (url && chapterNumber <= endChapter) {
-        // update books.json with last good url (replace ch1)
+    while (url) {
         const books = JSON.parse(fs.readFileSync('books.json', 'utf8'));
         const book = books.find(book => book.title === title);
         if (book) {
-            if(url != "javascript:;") {
-            book.ch1 = url;
-            fs.writeFileSync('books.json', JSON.stringify(books, null, 2));
-        }
-        }
-        if (chapterNumber >= startChapter) {
-            if(url !== "javascript:;") { 
-                const [chapterText, nextUrl] = await fetchChapter(url, sendUpdate);
-                if (chapterText) {
-                    doGen = true;
-                    saveChapter(chapterText, chapterNumber, directory, sendUpdate);
-                } else {
-                    sendUpdate("Failed to fetch chapter content. Exiting...");
-                    break;
-                }
-
-                if (!nextUrl) {
-                    sendUpdate("No next chapter found. Exiting...");
-                    break;
-                }
-
-                url = nextUrl;
-            } else {
-                sendUpdate("Downloading Chapters Completed...");
-                break;
+            if (url !== "javascript:;") {
+                book.ch1 = url;
+                fs.writeFileSync('books.json', JSON.stringify(books, null, 2));
             }
-        } else {
-            sendUpdate(`Skipping Chapter ${chapterNumber}`);
         }
-        
-        chapterNumber += 1;
+
+        const [chapterText, nextUrl] = await fetchChapter(url, sendUpdate);
+        if (!chapterText) {
+            sendUpdate("Failed to fetch chapter content. Exiting...");
+            break;
+        }
+
+        const extractedChapterNumber = extractChapterNumber(chapterText);
+        if (!extractedChapterNumber) {
+            sendUpdate('Failed to extract chapter number. Exiting...');
+            break;
+        }
+
+        saveChapter(chapterText, extractedChapterNumber, directory, sendUpdate);
+
+        if (!nextUrl) {
+            sendUpdate("No next chapter found. Exiting...");
+            break;
+        }
+
+        url = nextUrl;
+        chapterNumber += 1;  // Increment the chapter number for the next iteration
     }
 
+    // Download cover image and create epub
     await downloadCoverImage(coverUrl, directory, sendUpdate);
     await createEpub(title, author, directory, sendUpdate);
-
 }
 
 async function getTitlePage(url, sendUpdate) {
@@ -280,7 +303,7 @@ app.get("/cron", (req, res) => {
                     }
                     console.log(`${book.title}: \n Found ${files.length} files.\n Total chapters: ${book.totalChapters}\n`);
                     if (files.length < book.totalChapters) {
-                        downloadChapters(book.title, book.author, book.ch1, null, book.coverUrl, null);
+                        downloadChapters(book.title, book.author, book.ch1, book.coverUrl, null);
 
                     } else {
                         console.log(`Skipping ${book.title} because it is up to date.`);
@@ -313,8 +336,8 @@ app.post('/download', (req, res) => {
             if (title) {
                 client.send(JSON.stringify({ bookInfo: { title, author, coverUrl, totalChapters, ch1, status, url } }));
                 // count how many chapters are in the existing folder (if it exists). If totalChapters == how many chapters exist already, don't download anything.
-                const directory = title.replace(' ', '_');
-
+                const directory = title.replace(/\s+/g, '_');  // Replace spaces with underscores
+                
                 if (!fs.existsSync("public/" + directory)) {
                     fs.mkdirSync("public/" + directory);
                 }
@@ -365,7 +388,7 @@ app.post('/download', (req, res) => {
                     return;
                 }
                 
-                downloadChapters(title, author, ch1,null, coverUrl, sendUpdate).then(() => {
+                downloadChapters(title, author, ch1, coverUrl, sendUpdate).then(() => {
                     sendUpdate('Process Complete');
                 });
             } else {
