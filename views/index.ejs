@@ -150,10 +150,11 @@
                 .then(response => response.json())
                 .then(books => {
                 const library = document.getElementById("library");
-                console.log(books);
+
                 books.forEach(book => {
                     // check to see if the epub actually exists using standard javascript
-                    let epub = "public/" + book.title.replace(" ","_") + "/"+book.title+".epub";
+                    let epub = "public/" + book.title.replace(/\s+/g, '_')+ "/"+book.title.replace(/\s+/g, '_')+".epub";
+
                     checkFileExists(epub, (exists) => {
                         if (!exists) {
                             return;

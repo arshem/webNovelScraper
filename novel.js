@@ -55,9 +55,6 @@ async function fetchChapter(url, sendUpdate) {
 function saveChapter(content, chapterNumber, directory, sendUpdate) {
     const filename = path.join("public", directory, `chapter_${chapterNumber}.html`);
     
-    // Log the filename to ensure the path is correct.
-    console.log(`Saving to: ${filename}`);
-
     try {
         // Ensure the directory exists.
         if (!fs.existsSync(path.join("public", directory))) {
@@ -124,7 +121,7 @@ async function createEpub(title, author, directory, sendUpdate) {
     const options = {
         title: title,
         author: author,
-        output: path.join(dirPath, `${title}.epub`),
+        output: path.join(dirPath, `${title.replace(/\s+/g, '_')}.epub`),
         cover: path.join(dirPath, 'cover.jpg'),
         content: chapters, // Ensure this is the chapters array
     };
@@ -145,9 +142,12 @@ function extractChapterNumber(chapterText) {
     const $ = cheerio.load(chapterText);
     const chapterHeading = $('h1').text();  // Assuming chapter heading has an <h1> tag
 
-    const chapterMatch = chapterHeading.match(/Chapter\s+(\d+)/i);
+    const chapterMatch = chapterHeading.match(/Chapter\s+(\d+(\.\d+)?)/i);
+
     if (chapterMatch) {
-        return parseInt(chapterMatch[1], 10);
+        return parseFloat(chapterMatch[1]);
+    } else {
+        console.log("Failed to extract chapter number", chapterMatch);
     }
     return null;
 }
@@ -204,7 +204,8 @@ async function downloadChapters(title, author, startUrl, coverUrl, sendUpdate) {
         }
 
         const extractedChapterNumber = extractChapterNumber(chapterText);
-        if (!extractedChapterNumber) {
+
+        if (extractedChapterNumber === null) {
             sendUpdate('Failed to extract chapter number. Exiting...');
             break;
         }
@@ -337,7 +338,7 @@ app.post('/download', (req, res) => {
                 client.send(JSON.stringify({ bookInfo: { title, author, coverUrl, totalChapters, ch1, status, url } }));
                 // count how many chapters are in the existing folder (if it exists). If totalChapters == how many chapters exist already, don't download anything.
                 const directory = title.replace(/\s+/g, '_');  // Replace spaces with underscores
-                
+
                 if (!fs.existsSync("public/" + directory)) {
                     fs.mkdirSync("public/" + directory);
                 }
@@ -375,15 +376,15 @@ app.post('/download', (req, res) => {
                         if (!fs.existsSync(path.join("public", directory, "cover.jpg"))) {
                             downloadCoverImage(coverUrl, directory, sendUpdate);
                             createEpub(title, author, directory, sendUpdate).then(() => {
-                                sendUpdate(`Up to date. Download here: <a href="/public/${directory}/${title}.epub">${title}</a>`);
+                                sendUpdate(`Up to date. Download here: <a href="/public/${directory}/${directory}.epub">${title}</a>`);
                             });
                         } else {
                             createEpub(title, author, directory, sendUpdate).then(() => {
-                                sendUpdate(`Up to date. Download here: <a href="/public/${directory}/${title}.epub">${title}</a>`);
+                                sendUpdate(`Up to date. Download here: <a href="/public/${directory}/${directory}.epub">${title}</a>`);
                             });
                         }
                     } else {
-                        sendUpdate(`Up to date. Download here: <a href="/public/${directory}/${title}.epub">${title}</a>`);
+                        sendUpdate(`Up to date. Download here: <a href="/public/${directory}/${directory}.epub">${title}</a>`);
                     }
                     return;
                 }
