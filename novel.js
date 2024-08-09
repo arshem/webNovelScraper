@@ -147,16 +147,23 @@ async function createEpub(title, author, directory, sendUpdate) {
 }
 
 // Utility to extract chapter number from chapter text
-function extractChapterNumber(chapterText) {
+function extractChapterNumber(chapterText, directory) {
     const $ = cheerio.load(chapterText);
     const chapterHeading = $('h1').text();  // Assuming chapter heading has an <h1> tag
+    
 
     const chapterMatch = chapterHeading.match(/Chapter\s+(\d+(\.\d+)?)/i);
 
     if (chapterMatch) {
         return parseFloat(chapterMatch[1]);
+
+    } else if(chapterHeading.match(/^\d+(\.\d+)?/)) {
+        return chapterHeading.match(/^\d+(\.\d+)?/);
     } else {
-        return chapterHeading.match(/\d+(\.\d+)?/i);
+        // assume it's just words and count the files in the directory and add 1
+        const files = fs.readdirSync(path.join("public", directory));
+        const existingChapters = files.filter(file => file.startsWith('chapter_') && file.endsWith('.html')).length;
+        return existingChapters + 1;
     }
     return null;
 }
@@ -190,8 +197,20 @@ async function downloadChapters(title, author, startUrl, coverUrl, sendUpdate) {
             // Find the next chapter link in body > div.page-container > div > div > div > div > div.portlet.light.chapter.font-size-14.width-100.font-family-default.indent-default.paragraph-spacing-30 > div.portlet-body > div.row.nav-buttons > div.col-xs-6.col-md-4.col-md-offset-4.col-lg-3.col-lg-offset-6 > a
             const nextChapterLink = $('div.portlet-body > div.row.nav-buttons > div.col-xs-6.col-md-4.col-md-offset-4.col-lg-3.col-lg-offset-6 > a').attr('href');
             console.log("Next Chapter: ", nextChapterLink);
+            if (nextChapterLink && nextChapterLink !== "javascript:;") {
+                url = new URL(nextChapterLink, startUrl).toString();
+            } else {
+                sendUpdate("Done Downloading Chapters...");
+                return;
+            }
         } else {
             const nextChapterLink = $('a[rel="next"]').attr('href');
+            if (nextChapterLink && nextChapterLink !== "javascript:;") {
+                url = new URL(nextChapterLink, startUrl).toString();
+            } else {
+                sendUpdate("Done Downloading Chapters...");
+                return;
+            }
         }
 
         if (nextChapterLink && nextChapterLink !== "javascript:;") {
@@ -218,7 +237,7 @@ async function downloadChapters(title, author, startUrl, coverUrl, sendUpdate) {
             break;
         }
 
-        const extractedChapterNumber = extractChapterNumber(chapterText);
+        const extractedChapterNumber = extractChapterNumber(chapterText, directory);
 
         if (extractedChapterNumber === null) {
             sendUpdate('Failed to extract chapter number. Exiting...');
@@ -324,10 +343,13 @@ app.get("/cron", (req, res) => {
         }
         const books = JSON.parse(data);
         books.forEach(book => {
-            if (book.status == "Ongoing") {
+            // book.status could be Ongoing or ONGOING, so let's lowercase the string. 
+            if (book.status.toLowerCase() == "ongoing") {
                 console.log(`Checking ${book.title} for new chapters...`);
                 // count number of files in the directory (replace spaces with underscores), and if the count is less than the total chapters, then run downloadChapters
-                const bookTitle = book.title.replace(' ', '_');
+                const bookTitle = book.title.replace(/\s+/g, '_');
+
+                console.log("Book Title: " + bookTitle);
                 const dirPath = path.join("public", bookTitle);
                 const files = fs.readdirSync(dirPath).filter(file => file.startsWith('chapter_') && file.endsWith('.html'));
                 // update totalChapters in books.json
