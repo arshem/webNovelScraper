@@ -31,9 +31,14 @@ async function fetchChapter(url, sendUpdate) {
                 const chapterTitle = $('body > div.page-container > div > div > div > div > div.row.fic-header.margin-bottom-40 > div > div.col-md-5.col-lg-6.col-md-offset-1.text-center.md-text-left > h1').text().trim();
                 const chapterContainer = $('.chapter-content')
                 const nextChapterLink = $('div.portlet-body > div.row.nav-buttons > div.col-xs-6.col-md-4.col-md-offset-4.col-lg-3.col-lg-offset-6 > a').attr('href');
-                const nextChapterUrl = nextChapterLink.length ? new URL(nextChapterLink, url).toString() : null;
 
                 const chapterText = `<h1>${chapterTitle}</h1>\n${chapterContainer.html()}`;
+
+                if(!nextChapterLink)
+                {
+                    return [chapterText, null];
+                }
+
 
                 sendUpdate(`Successfully fetched chapter: "${chapterTitle}"`);
 
@@ -42,6 +47,7 @@ async function fetchChapter(url, sendUpdate) {
                 const chapterTitle = $('.chapter-title').text().trim() || 'Untitled Chapter';
                 const chapterContainer = $('#chapter-container');
                 const nextChapterLink = $('a[rel="next"]').attr('href');
+                console.log(nextChapterLink);
                 const nextChapterUrl = nextChapterLink.length ? new URL(nextChapterLink, url).toString() : null;
 
                 const chapterText = `<h1>${chapterTitle}</h1>\n${chapterContainer.html()}`;
@@ -335,6 +341,10 @@ app.get("/cron", (req, res) => {
                 const bookTitle = book.title.replace(/\s+/g, '_');
 
                 const dirPath = path.join("public", bookTitle);
+                // check if directory exists
+                if (!fs.existsSync(dirPath)) {
+                    fs.mkdirSync(dirPath);
+                }
                 const files = fs.readdirSync(dirPath).filter(file => file.startsWith('chapter_') && file.endsWith('.html'));
                 // update totalChapters in books.json
 
