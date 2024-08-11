@@ -145,6 +145,9 @@ async function createEpub(title, author, directory, sendUpdate) {
         // Step 5: Generate EPUB and handle the resulting buffer
         new epub(options).promise.then(() => console.log('Done'));
         sendUpdate(`ePub created successfully: <a href="/${directory}/${title}.epub" download>Download Here</a>`);
+        // delete /public/directory/fetch.lock after generating epub
+        fs.unlinkSync(path.join("public", directory, "fetch.lock"));
+
     } catch (err) {
         // Handle and log errors
         console.error("Failed to generate Ebook because of ", err);
@@ -172,6 +175,15 @@ async function downloadChapters(title, author, startUrl, coverUrl, sendUpdate) {
 
     if (!fs.existsSync(path.join("public", directory))) {
         fs.mkdirSync(path.join("public", directory));
+    }
+
+    // checking to see if the fetch.lock exists in the directory to prevent duplicate downloads
+    if (fs.existsSync(path.join("public", directory, "fetch.lock"))) {
+        sendUpdate('Already downloading. Please check back later.');
+        return;
+    } else {
+        // create the lock file
+        fs.writeFileSync(path.join("public", directory, "fetch.lock"), 'lock');
     }
 
     // Find the last saved chapter to continue downloading from there
@@ -364,6 +376,7 @@ app.get("/cron", (req, res) => {
                     }
                     console.log(`${book.title}: \n Found ${files.length} files.\n Total chapters: ${book.totalChapters}\n`);
                     if (files.length < book.totalChapters) {
+
                         downloadChapters(book.title, book.author, book.ch1, book.coverUrl, null);
 
                     } else {
