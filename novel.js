@@ -192,10 +192,25 @@ async function downloadChapters(title, author, startUrl, coverUrl, sendUpdate) {
     if (chapterNumber > 1) {
         chapterNumber -= 1;
         const lastFile = fs.readFileSync(path.join("public", directory, `chapter_${chapterNumber}.html`), 'utf-8');
-        const $ = cheerio.load(lastFile);
+
+        // use fetch to grab the HTML from startUrl
+        const response = await fetch(startUrl);
+        const html = await response.text();
+        // use cheerio to parse the HTML
+        const $ = cheerio.load(html);
+
         if(startUrl.includes("royalroad")){
             // Find the next chapter link in body > div.page-container > div > div > div > div > div.portlet.light.chapter.font-size-14.width-100.font-family-default.indent-default.paragraph-spacing-30 > div.portlet-body > div.row.nav-buttons > div.col-xs-6.col-md-4.col-md-offset-4.col-lg-3.col-lg-offset-6 > a
             const nextChapterLink = $('div.portlet-body > div.row.nav-buttons > div.col-xs-6.col-md-4.col-md-offset-4.col-lg-3.col-lg-offset-6 > a').attr('href');
+            console.log("Next Chapter RR: ", nextChapterLink);
+            if (nextChapterLink && nextChapterLink !== "javascript:;") {
+                url = new URL(nextChapterLink, startUrl).toString();
+            } else {
+                sendUpdate("Done Downloading Chapters RR...");
+                return;
+            }
+        } else {
+            const nextChapterLink = $('a[rel="next"]').attr('href');
             console.log("Next Chapter: ", nextChapterLink);
             if (nextChapterLink && nextChapterLink !== "javascript:;") {
                 url = new URL(nextChapterLink, startUrl).toString();
@@ -203,21 +218,6 @@ async function downloadChapters(title, author, startUrl, coverUrl, sendUpdate) {
                 sendUpdate("Done Downloading Chapters...");
                 return;
             }
-        } else {
-            const nextChapterLink = $('a[rel="next"]').attr('href');
-            if (nextChapterLink && nextChapterLink !== "javascript:;") {
-                url = new URL(nextChapterLink, startUrl).toString();
-            } else {
-                sendUpdate("Done Downloading Chapters...");
-                return;
-            }
-        }
-
-        if (nextChapterLink && nextChapterLink !== "javascript:;") {
-            url = new URL(nextChapterLink, startUrl).toString();
-        } else {
-            sendUpdate("Done Downloading Chapters...");
-            return;
         }
     }
 
