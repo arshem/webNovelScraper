@@ -148,24 +148,9 @@ async function createEpub(title, author, directory, sendUpdate) {
 
 // Utility to extract chapter number from chapter text
 function extractChapterNumber(chapterText, directory) {
-    const $ = cheerio.load(chapterText);
-    const chapterHeading = $('h1').text();  // Assuming chapter heading has an <h1> tag
-    
-
-    const chapterMatch = chapterHeading.match(/Chapter\s+(\d+(\.\d+)?)/i);
-
-    if (chapterMatch) {
-        return parseFloat(chapterMatch[1]);
-
-    } else if(chapterHeading.match(/^\d+(\.\d+)?/)) {
-        return chapterHeading.match(/^\d+(\.\d+)?/);
-    } else {
-        // assume it's just words and count the files in the directory and add 1
-        const files = fs.readdirSync(path.join("public", directory));
-        const existingChapters = files.filter(file => file.startsWith('chapter_') && file.endsWith('.html')).length;
-        return existingChapters + 1;
-    }
-    return null;
+    const files = fs.readdirSync(path.join("public", directory));
+    const existingChapters = files.filter(file => file.startsWith('chapter_') && file.endsWith('.html')).length;
+    return existingChapters + 1;
 }
 
 
@@ -178,7 +163,7 @@ async function downloadChapters(title, author, startUrl, coverUrl, sendUpdate) {
     }
 
     const directory = title.replace(/\s+/g, '_');  // Replace spaces with underscores
-    console.log(`Directory: ${directory}`);
+
     if (!fs.existsSync(path.join("public", directory))) {
         fs.mkdirSync(path.join("public", directory));
     }
@@ -202,16 +187,16 @@ async function downloadChapters(title, author, startUrl, coverUrl, sendUpdate) {
         if(startUrl.includes("royalroad")){
             // Find the next chapter link in body > div.page-container > div > div > div > div > div.portlet.light.chapter.font-size-14.width-100.font-family-default.indent-default.paragraph-spacing-30 > div.portlet-body > div.row.nav-buttons > div.col-xs-6.col-md-4.col-md-offset-4.col-lg-3.col-lg-offset-6 > a
             const nextChapterLink = $('div.portlet-body > div.row.nav-buttons > div.col-xs-6.col-md-4.col-md-offset-4.col-lg-3.col-lg-offset-6 > a').attr('href');
-            console.log("Next Chapter RR: ", nextChapterLink);
+
             if (nextChapterLink && nextChapterLink !== "javascript:;") {
                 url = new URL(nextChapterLink, startUrl).toString();
             } else {
-                sendUpdate("Done Downloading Chapters RR...");
+                sendUpdate("Done Downloading Chapters...");
                 return;
             }
         } else {
             const nextChapterLink = $('a[rel="next"]').attr('href');
-            console.log("Next Chapter: ", nextChapterLink);
+
             if (nextChapterLink && nextChapterLink !== "javascript:;") {
                 url = new URL(nextChapterLink, startUrl).toString();
             } else {
@@ -281,7 +266,7 @@ async function getTitlePage(url, sendUpdate) {
             const coverUrl = $('body > div.page-container > div > div > div > div.page-content-inner > div > div.row.fic-header > div.col-md-3.text-center.cover-col > div > img').attr('src');
             const chapterCount = $('div.page-content-inner > div > div.fiction.row > div > div.fiction-info > div:nth-child(5) > div.portlet-title > div.actions > span').text().replace(" Chapters", "").trim();
             
-            sendUpdate(`title: ${title}, author: ${author}, url: ${url}, coverUrl: ${coverUrl}, chapterCount: ${chapterCount}, status: ${status}, startUrl: ${startUrl}`);
+            //sendUpdate(`title: ${title}, author: ${author}, url: ${url}, coverUrl: ${coverUrl}, chapterCount: ${chapterCount}, status: ${status}, startUrl: ${startUrl}`);
 
             return [title, author, startUrl, coverUrl, chapterCount, status, url];
         } catch (error) {
@@ -301,7 +286,7 @@ async function getTitlePage(url, sendUpdate) {
             const chapterCount = $('div.header-stats span strong').text().trim().split(' ')[0];
             const status = $('div.header-stats span:last-child').text().replace("Status", "").trim();
 
-            sendUpdate(`Successfully fetched title page: ${title}, ${author}, ${startUrl}, ${coverUrl}, ${chapterCount}, ${status}`);
+            //sendUpdate(`Successfully fetched title page: ${title}, ${author}, ${startUrl}, ${coverUrl}, ${chapterCount}, ${status}`);
             return [title, author, startUrl, coverUrl, chapterCount, status, url];
         } catch (error) {
             sendUpdate(`Failed to fetch title page: ${error}`);
@@ -349,7 +334,6 @@ app.get("/cron", (req, res) => {
                 // count number of files in the directory (replace spaces with underscores), and if the count is less than the total chapters, then run downloadChapters
                 const bookTitle = book.title.replace(/\s+/g, '_');
 
-                console.log("Book Title: " + bookTitle);
                 const dirPath = path.join("public", bookTitle);
                 const files = fs.readdirSync(dirPath).filter(file => file.startsWith('chapter_') && file.endsWith('.html'));
                 // update totalChapters in books.json
@@ -401,7 +385,7 @@ app.post('/download', (req, res) => {
         sendUpdate('Grabbing title page...');
         getTitlePage(startUrl, sendUpdate).then(([title, author, ch1, coverUrl, totalChapters, status, url]) => {
             if (title) {
-                client.send(JSON.stringify({ bookInfo: { title, author, coverUrl, totalChapters, ch1, status, url } }));
+                //client.send(JSON.stringify({ bookInfo: { title, author, coverUrl, totalChapters, ch1, status, url } }));
                 // count how many chapters are in the existing folder (if it exists). If totalChapters == how many chapters exist already, don't download anything.
                 const directory = title.replace(/\s+/g, '_');  // Replace spaces with underscores
 
@@ -454,7 +438,7 @@ app.post('/download', (req, res) => {
                     }
                     return;
                 }
-                console.log("Ch1: ", ch1);
+
                 downloadChapters(title, author, ch1, coverUrl, sendUpdate).then(() => {
                     sendUpdate('Process Complete');
                 });
