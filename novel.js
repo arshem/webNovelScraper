@@ -32,17 +32,18 @@ async function fetchChapter(url, sendUpdate) {
                 const chapterContainer = $('.chapter-content')
                 const nextChapterLink = $('div.portlet-body > div.row.nav-buttons > div.col-xs-6.col-md-4.col-md-offset-4.col-lg-3.col-lg-offset-6 > a').attr('href');
 
-                const chapterText = `<h1>${chapterTitle}</h1>\n${chapterContainer.html()}`;
-
-                if(!nextChapterLink)
+                if(nextChapterLink)
                 {
+                    const nextChapterUrl = new URL(nextChapterLink, url).toString();
+                    const chapterText = `<h1>${chapterTitle}</h1>\n${chapterContainer.html()}`;
+                    sendUpdate(`Successfully fetched chapter and next: "${chapterTitle}"`);
+
+                    return [chapterText, nextChapterUrl];
+                } else {
+                    const chapterText = `<h1>${chapterTitle}</h1>\n${chapterContainer.html()}`;
+                    sendUpdate(`Successfully fetched chapter: "${chapterTitle}"`);
                     return [chapterText, null];
                 }
-
-
-                sendUpdate(`Successfully fetched chapter: "${chapterTitle}"`);
-
-                return [chapterText, nextChapterUrl];
             } else {
                 const chapterTitle = $('.chapter-title').text().trim() || 'Untitled Chapter';
                 const chapterContainer = $('#chapter-container');
@@ -144,9 +145,13 @@ async function createEpub(title, author, directory, sendUpdate) {
     try {
         // Step 5: Generate EPUB and handle the resulting buffer
         new epub(options).promise.then(() => console.log('Done'));
-        sendUpdate(`ePub created successfully: <a href="/${directory}/${title}.epub" download>Download Here</a>`);
+        // remove lock
         // delete /public/directory/fetch.lock after generating epub
-        fs.unlinkSync(path.join("public", directory, "fetch.lock"));
+        
+        if(fs.existsSync(path.join("public", directory, "fetch.lock"))) {
+            fs.unlinkSync(path.join("public", directory, "fetch.lock"));            
+        }
+        sendUpdate(`ePub created successfully: <a href="/${title}/${title}.epub" download>Download Here</a>`);
 
     } catch (err) {
         // Handle and log errors
@@ -177,54 +182,8 @@ async function downloadChapters(title, author, startUrl, coverUrl, sendUpdate) {
         fs.mkdirSync(path.join("public", directory));
     }
 
-    // checking to see if the fetch.lock exists in the directory to prevent duplicate downloads
-    if (fs.existsSync(path.join("public", directory, "fetch.lock"))) {
-        sendUpdate('Already downloading. Please check back later.');
-        return;
-    } else {
-        // create the lock file
-        fs.writeFileSync(path.join("public", directory, "fetch.lock"), 'lock');
-    }
-
-    // Find the last saved chapter to continue downloading from there
-    while (fs.existsSync(path.join("public", directory, `chapter_${chapterNumber}.html`))) {
-        chapterNumber += 1;
-    }
-
-    // Deduct 1, because the loop above increments before the last valid chapter check
-    if (chapterNumber > 1) {
-        chapterNumber -= 1;
-        const lastFile = fs.readFileSync(path.join("public", directory, `chapter_${chapterNumber}.html`), 'utf-8');
-
-        // use fetch to grab the HTML from startUrl
-        const response = await fetch(startUrl);
-        const html = await response.text();
-        // use cheerio to parse the HTML
-        const $ = cheerio.load(html);
-
-        if(startUrl.includes("royalroad")){
-            // Find the next chapter link in body > div.page-container > div > div > div > div > div.portlet.light.chapter.font-size-14.width-100.font-family-default.indent-default.paragraph-spacing-30 > div.portlet-body > div.row.nav-buttons > div.col-xs-6.col-md-4.col-md-offset-4.col-lg-3.col-lg-offset-6 > a
-            const nextChapterLink = $('div.portlet-body > div.row.nav-buttons > div.col-xs-6.col-md-4.col-md-offset-4.col-lg-3.col-lg-offset-6 > a').attr('href');
-
-            if (nextChapterLink && nextChapterLink !== "javascript:;") {
-                url = new URL(nextChapterLink, startUrl).toString();
-            } else {
-                sendUpdate("Done Downloading Chapters...");
-                return;
-            }
-        } else {
-            const nextChapterLink = $('a[rel="next"]').attr('href');
-
-            if (nextChapterLink && nextChapterLink !== "javascript:;") {
-                url = new URL(nextChapterLink, startUrl).toString();
-            } else {
-                sendUpdate("Done Downloading Chapters...");
-                return;
-            }
-        }
-    }
-
     while (url) {
+        
         const books = JSON.parse(fs.readFileSync('books.json', 'utf8'));
         const book = books.find(book => book.title === title);
         if (book) {
@@ -235,6 +194,7 @@ async function downloadChapters(title, author, startUrl, coverUrl, sendUpdate) {
         }
 
         const [chapterText, nextUrl] = await fetchChapter(url, sendUpdate);
+        
         if (!chapterText) {
             sendUpdate("Failed to fetch chapter content. Exiting...");
             break;
@@ -251,11 +211,52 @@ async function downloadChapters(title, author, startUrl, coverUrl, sendUpdate) {
 
         if (!nextUrl) {
             sendUpdate("No next chapter found. Exiting...");
-            break;
         }
 
         url = nextUrl;
         chapterNumber += 1;  // Increment the chapter number for the next iteration
+    }
+
+    // checking to see if the fetch.lock exists in the directory to prevent duplicate downloads
+    if (fs.existsSync(path.join("public", directory, "fetch.lock"))) {
+        sendUpdate("Fetch lock exists. Exiting...");
+        fs.writeFileSync(path.join("public", directory, "fetch.lock"), 'lock');
+    }
+
+    // Find the last saved chapter to continue downloading from there
+    while (fs.existsSync(path.join("public", directory, `chapter_${chapterNumber}.html`))) {
+        chapterNumber += 1;
+    }
+
+    // Deduct 1, because the loop above increments before the last valid chapter check
+    if (chapterNumber > 1) {
+        chapterNumber -= 1;
+        const lastFile = fs.readFileSync(path.join("public", directory, `chapter_${chapterNumber}.html`), 'utf-8');
+        console.log(startUrl);
+        // use fetch to grab the HTML from startUrl
+        const response = await fetch(startUrl);
+        const html = await response.text();
+        // use cheerio to parse the HTML
+        const $ = cheerio.load(html);
+
+        if(startUrl.includes("royalroad")) {
+            // Find the next chapter link in body > div.page-container > div > div > div > div > div.portlet.light.chapter.font-size-14.width-100.font-family-default.indent-default.paragraph-spacing-30 > div.portlet-body > div.row.nav-buttons > div.col-xs-6.col-md-4.col-md-offset-4.col-lg-3.col-lg-offset-6 > a
+            const nextChapterLink = $('div.portlet-body > div.row.nav-buttons > div.col-xs-6.col-md-4.col-md-offset-4.col-lg-3.col-lg-offset-6 > a').attr('href');
+            console.log(nextChapterLink);
+            if (nextChapterLink && nextChapterLink !== "javascript:;") {
+                url = new URL(nextChapterLink, startUrl).toString();
+            } else {
+                sendUpdate("Done Downloading Chapters...");
+            }
+        } else {
+            const nextChapterLink = $('a[rel="next"]').attr('href');
+
+            if (nextChapterLink && nextChapterLink !== "javascript:;") {
+                url = new URL(nextChapterLink, startUrl).toString();
+            } else {
+                sendUpdate("Done Downloading Chapters...");
+            }
+        }
     }
 
     // Download cover image and create epub
@@ -438,8 +439,6 @@ app.post('/download', (req, res) => {
                     }
                 }
 
-
-
                 const existingFiles = fs.readdirSync(path.join("public", directory));
                 const existingChapters = existingFiles.filter(file => file.startsWith('chapter_') && file.endsWith('.html')).length;
                 if (existingChapters >= totalChapters) {
@@ -475,6 +474,8 @@ app.post('/download', (req, res) => {
 
     res.status(200).json({ message: 'Download started' });
 });
+
+
 
 const server = app.listen(port, () => {
     console.log(`Server is running on http://localhost:${port}`);
