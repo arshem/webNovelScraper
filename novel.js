@@ -21,6 +21,29 @@ const headers = {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/70.0.3538.77 Safari/537.36'
 };
 
+// making the project locks better:
+function createLock(directory, sendUpdate) {
+    const lockFilePath = path.join(directory, 'fetch.lock');
+
+    if (fs.existsSync(lockFilePath)) {
+        sendUpdate(`Another process is already running for ${directory}. Cannot start a new one.`);
+        return false;
+    }
+
+    fs.writeFileSync(lockFilePath, 'locked');
+    sendUpdate(`Lock file created for ${directory}. Starting process...`);
+    return true;
+}
+
+function removeLock(directory, sendUpdate) {
+    const lockFilePath = path.join(directory, 'fetch.lock');
+
+    if (fs.existsSync(lockFilePath)) {
+        fs.unlinkSync(lockFilePath);
+        sendUpdate(`Lock file removed for ${directory}.`);
+    }
+}
+
 async function fetchChapter(url, sendUpdate) {
     if(url !== "javascript:;") {
         try {
@@ -177,8 +200,14 @@ async function downloadChapters(title, author, startUrl, coverUrl, sendUpdate, s
 
     const directory = title.replace(/\s+/g, '_');
 
+
+    
     if (!fs.existsSync(path.join("public", directory))) {
         fs.mkdirSync(path.join("public", directory));
+    }
+    // Create a lock to prevent simultaneous execution for this project
+    if (!createLock(path.join("public", directory), sendUpdate)) {
+        return;  // Exit if another process is already running for this project
     }
 
     const dirPath = path.join("public", directory);
@@ -214,34 +243,43 @@ async function downloadChapters(title, author, startUrl, coverUrl, sendUpdate, s
             chapterNumber--;  // Adjust the chapter number to overwrite or continue correctly
         }
     }
+    try {
 
-    while (url) {
-        const books = JSON.parse(fs.readFileSync('books.json', 'utf8'));
-        const book = books.find(book => book.title === title);
+        while (url) {
+            const books = JSON.parse(fs.readFileSync('books.json', 'utf8'));
+            const book = books.find(book => book.title === title);
 
-        if (book && url !== "javascript:;") {
-            book.ch1 = url;
-            fs.writeFileSync('books.json', JSON.stringify(books, null, 2));
+            if (book && url !== "javascript:;") {
+                book.ch1 = url;
+                fs.writeFileSync('books.json', JSON.stringify(books, null, 2));
+            }
+
+            const [chapterText, nextUrl] = await fetchChapter(url, sendUpdate);
+
+            if (!chapterText) {
+                sendUpdate("Failed to fetch chapter content. Exiting...");
+                break;
+            }
+
+            const currentChapterNumber = chapterNumber;
+
+            saveChapter(chapterText, currentChapterNumber, directory, sendUpdate);
+
+            if (!nextUrl) {
+                sendUpdate("No next chapter found. Exiting...");
+                break;
+            }
+
+            url = nextUrl;  // Proceed to the next chapter's URL
+            chapterNumber += 1;  // Increment the chapter number correctly
         }
-
-        const [chapterText, nextUrl] = await fetchChapter(url, sendUpdate);
-
-        if (!chapterText) {
-            sendUpdate("Failed to fetch chapter content. Exiting...");
-            break;
-        }
-
-        const currentChapterNumber = chapterNumber;
-
-        saveChapter(chapterText, currentChapterNumber, directory, sendUpdate);
-
-        if (!nextUrl) {
-            sendUpdate("No next chapter found. Exiting...");
-            break;
-        }
-
-        url = nextUrl;  // Proceed to the next chapter's URL
-        chapterNumber += 1;  // Increment the chapter number correctly
+    } catch (err) {
+        // Handle and log errors
+        console.error("Failed to download chapters because of ", err);
+        sendUpdate(`Failed to download chapters: ${err.message}`);
+    } finally {
+        // Remove the lock
+        removeLock(path.join("public", directory), sendUpdate);
     }
 
     await downloadCoverImage(coverUrl, directory, sendUpdate);
@@ -344,7 +382,7 @@ app.get("/cron", (req, res) => {
                 }
                 const files = fs.readdirSync(dirPath).filter(file => file.startsWith('chapter_') && file.endsWith('.html'));
                 // update totalChapters in books.json
-
+                try {
                 // get new totalChapters from getTitlePage
                 getTitlePage(book.url, sendUpdate).then(([title, author, startUrl, coverUrl, totalChapters, status, url]) => {
                     // update books.json with new chapter count, just in case it does change
@@ -369,6 +407,12 @@ app.get("/cron", (req, res) => {
                     }
     
                 })
+                } catch (error) {
+                    console.error(error);
+                } finally {
+                    // remove the lock
+                    removeLock(bookTitle, sendUpdate);
+                }
                 //downloadChapters(book.title, book.author, book.ch1, null, book.coverUrl, null);
             } else {
                 console.log(`Skipping ${book.title} because it is not ongoing.`);
@@ -389,75 +433,88 @@ app.post('/download', (req, res) => {
             client.send(JSON.stringify({ message }));
         };
 
-        // grab title page
         sendUpdate('Grabbing title page...');
+
         getTitlePage(startUrl, sendUpdate).then(([title, author, ch1, coverUrl, totalChapters, status, url]) => {
             if (title) {
-                //client.send(JSON.stringify({ bookInfo: { title, author, coverUrl, totalChapters, ch1, status, url } }));
-                // count how many chapters are in the existing folder (if it exists). If totalChapters == how many chapters exist already, don't download anything.
                 const directory = title.replace(/\s+/g, '_');  // Replace spaces with underscores
 
-                if (!fs.existsSync("public/" + directory)) {
-                    fs.mkdirSync("public/" + directory);
+                // Create the lock specific to this book directory
+                if (!createLock(directory, sendUpdate)) {
+                    return res.status(423).json({ message: "Download locked by another process." });
                 }
 
-                // check books.json to see if the book already exists, if not, add the title, author, coverUrl, totalChapters, and ch1 to the books.json
-                // confirm books.json exists, if not create it.
-                if (!fs.existsSync('books.json')) {
-                    fs.writeFileSync('books.json', '[]');
-                }
-
-                const books = JSON.parse(fs.readFileSync('books.json', 'utf8'));
-                const existingBook = books.find(book => book.title === title);
-                if (!existingBook) {
-                    const date = new Date();
-                    const year = date.getFullYear();
-                    const month = String(date.getMonth() + 1).padStart(2, '0');
-                    const day = String(date.getDate()).padStart(2, '0');
-                    const updated = `${year}-${month}-${day}`;
-                    books.push({ title, author, coverUrl, totalChapters, ch1, status, url, updated });
-                    fs.writeFileSync('books.json', JSON.stringify(books, null, 2));
-                } else {
-                    if(existingBook.ch1 !== ch1) {
-                        ch1 = existingBook.ch1;
+                try {
+                    if (!fs.existsSync("public/" + directory)) {
+                        fs.mkdirSync("public/" + directory);
                     }
-                }
 
-                const existingFiles = fs.readdirSync(path.join("public", directory));
-                const existingChapters = existingFiles.filter(file => file.startsWith('chapter_') && file.endsWith('.html')).length;
-                if (existingChapters >= totalChapters) {
-                    // check to see if epub exists, if not compile it
-                    if (!fs.existsSync(path.join("public", directory, `${title}.epub`))) {
-                        // confirm if cover exists
-                        if (!fs.existsSync(path.join("public", directory, "cover.jpg"))) {
-                            downloadCoverImage(coverUrl, directory, sendUpdate);
-                            createEpub(title, author, directory, sendUpdate).then(() => {
-                                sendUpdate(`Up to date. Download here: <a href="/public/${directory}/${directory}.epub">${title}</a>`);
-                            });
-                        } else {
-                            createEpub(title, author, directory, sendUpdate).then(() => {
-                                sendUpdate(`Up to date. Download here: <a href="/public/${directory}/${directory}.epub">${title}</a>`);
-                            });
-                        }
+                    if (!fs.existsSync('books.json')) {
+                        fs.writeFileSync('books.json', '[]');
+                    }
+
+                    const books = JSON.parse(fs.readFileSync('books.json', 'utf8'));
+                    let existingBook = books.find(book => book.title === title);
+
+                    if (!existingBook) {
+                        const date = new Date();
+                        const year = date.getFullYear();
+                        const month = String(date.getMonth() + 1).padStart(2, '0');
+                        const day = String(date.getDate()).padStart(2, '0');
+                        const updated = `${year}-${month}-${day}`;
+                        books.push({ title, author, coverUrl, totalChapters, ch1, status, url, updated });
+                        fs.writeFileSync('books.json', JSON.stringify(books, null, 2));
                     } else {
-                        sendUpdate(`Up to date. Download here: <a href="/public/${directory}/${directory}.epub">${title}</a>`);
+                        // Update ch1 if it has changed
+                        if (existingBook.ch1 !== ch1) {
+                            ch1 = existingBook.ch1;
+                        }
                     }
-                    return;
-                }
 
-                downloadChapters(title, author, ch1, coverUrl, sendUpdate).then(() => {
-                    sendUpdate('Process Complete');
-                });
+                    const existingFiles = fs.readdirSync(path.join("public", directory));
+                    const existingChapters = existingFiles.filter(file => file.startsWith('chapter_') && file.endsWith('.html')).length;
+
+                    if (existingChapters >= totalChapters) {
+                        // Check to see if epub exists, if not compile it
+                        if (!fs.existsSync(path.join("public", directory, `${title}.epub`))) {
+                            // Confirm if cover exists, then compile epub
+                            if (!fs.existsSync(path.join("public", directory, "cover.jpg"))) {
+                                downloadCoverImage(coverUrl, directory, sendUpdate)
+                                    .then(() => createEpub(title, author, directory, sendUpdate))
+                                    .then(() => {
+                                        sendUpdate(`Up to date. Download here: <a href="/public/${directory}/${directory}.epub">${title}</a>`);
+                                    });
+                            } else {
+                                createEpub(title, author, directory, sendUpdate).then(() => {
+                                    sendUpdate(`Up to date. Download here: <a href="/public/${directory}/${directory}.epub">${title}</a>`);
+                                });
+                            }
+                        } else {
+                            sendUpdate(`Up to date. Download here: <a href="/public/${directory}/${directory}.epub">${title}</a>`);
+                        }
+                        return;
+                    }
+
+                    // Now proceed with downloading chapters
+                    downloadChapters(title, author, ch1, coverUrl, sendUpdate).then(() => {
+                        sendUpdate('Process Complete');
+                    });
+
+                } finally {
+                    // Always remove the lock afterward, whether success or failure
+                    removeLock(directory, sendUpdate);
+                }
             } else {
                 sendUpdate('Failed to fetch title page. Exiting...');
                 console.error('Failed to fetch title page. Exiting...');
             }
-        })
-        /*  */
-    }
+        });
 
+    }
+    
     res.status(200).json({ message: 'Download started' });
 });
+
 
 
 
