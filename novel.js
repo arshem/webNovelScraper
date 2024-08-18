@@ -171,48 +171,51 @@ function extractChapterNumber(chapterText, directory) {
 async function downloadChapters(title, author, startUrl, coverUrl, sendUpdate, skipFirstChapter = false) {
     let url = startUrl;
 
-    // If no `sendUpdate` function is provided, default to logging to the console
     if (!sendUpdate) {
         sendUpdate = message => { console.log(message); };
     }
 
-    // Generate directory name by replacing spaces with underscores
     const directory = title.replace(/\s+/g, '_');
 
-    // Ensure directory exists
     if (!fs.existsSync(path.join("public", directory))) {
         fs.mkdirSync(path.join("public", directory));
     }
 
     const dirPath = path.join("public", directory);
-    let chapterNumber = 1;  // Default to 1 if no chapters exist already
+    let chapterNumber = 1; // Default to start at Chapter 1
 
-    // Calculate the next chapter number based on the last file saved:
+    // Retrieve existing chapters sorted by chapter number
     const existingChapters = fs.readdirSync(dirPath)
         .filter(file => file.startsWith('chapter_') && file.endsWith('.html'))
         .sort((a, b) => parseInt(a.split('_')[1]) - parseInt(b.split('_')[1]));
 
     if (existingChapters.length > 0) {
         const lastChapterFile = existingChapters[existingChapters.length - 1];
-        chapterNumber = parseInt(lastChapterFile.split('_')[1]) + 1; // Start from next chapter number
-    }
+        chapterNumber = parseInt(lastChapterFile.split('_')[1]) + 1;  // Start with the next chapter number
 
-    if (skipFirstChapter) {
-        sendUpdate(`Cron job detected. Skipping download of the current chapter at ${url} and finding the next chapter.`);
+        // Read the content of the last downloaded chapter
+        const lastChapterContent = fs.readFileSync(path.join(dirPath, lastChapterFile), 'utf-8');
+        const $last = cheerio.load(lastChapterContent);
+        const lastChapterTitle = $last('h1').first().text().trim();
+        sendUpdate(`Last downloaded chapter title: "${lastChapterTitle}"`);
 
-        // Fetch the next URL without downloading the current chapter
-        const [_, nextUrl] = await fetchChapter(url, sendUpdate); 
-        if (!nextUrl) {
-            sendUpdate("No next chapter found. Exiting...");
-            return;
+        // Fetch just the title/text from the starting URL without saving it
+        const [currentChapterText, nextUrl] = await fetchChapter(url, sendUpdate); 
+        const $current = cheerio.load(currentChapterText);
+        const currentChapterTitle = $current('h1').first().text().trim();
+        
+        // If the last chapter and current startUrl chapter titles match, skip the first chapter
+        if (lastChapterTitle === currentChapterTitle) {
+            sendUpdate(`The chapter from startUrl "${url}" matches the last downloaded chapter. Skipping this chapter.`);
+            url = nextUrl;  // Move to the next chapter URL
+        } else {
+            sendUpdate(`The chapter from startUrl "${url}" differs from the last downloaded chapter. Restarting from this chapter.`);
+            // Do not change the url, proceed to download this chapter again.
+            chapterNumber--;  // Adjust the chapter number to overwrite or continue correctly
         }
-
-        // Update URL to next chapter's URL and move to the next one for downloading
-        url = nextUrl;
     }
 
     while (url) {
-        // Update the JSON file with the latest chapter URL
         const books = JSON.parse(fs.readFileSync('books.json', 'utf8'));
         const book = books.find(book => book.title === title);
 
@@ -221,7 +224,6 @@ async function downloadChapters(title, author, startUrl, coverUrl, sendUpdate, s
             fs.writeFileSync('books.json', JSON.stringify(books, null, 2));
         }
 
-        // Fetch chapter content and the next URL
         const [chapterText, nextUrl] = await fetchChapter(url, sendUpdate);
 
         if (!chapterText) {
@@ -229,20 +231,19 @@ async function downloadChapters(title, author, startUrl, coverUrl, sendUpdate, s
             break;
         }
 
-        // Save the chapter content with the correct chapter number
-        saveChapter(chapterText, chapterNumber, directory, sendUpdate);
+        const currentChapterNumber = chapterNumber;
+
+        saveChapter(chapterText, currentChapterNumber, directory, sendUpdate);
 
         if (!nextUrl) {
             sendUpdate("No next chapter found. Exiting...");
             break;
         }
 
-        // Move to the next URL and increment the chapter number
-        url = nextUrl;
-        chapterNumber += 1;  
+        url = nextUrl;  // Proceed to the next chapter's URL
+        chapterNumber += 1;  // Increment the chapter number correctly
     }
 
-    // After fetching all chapters, download any cover image and generate the EPUB file
     await downloadCoverImage(coverUrl, directory, sendUpdate);
     await createEpub(title, author, directory, sendUpdate);
 }
