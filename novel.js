@@ -49,7 +49,7 @@ async function fetchChapter(url, sendUpdate) {
                 const chapterContainer = $('#chapter-container');
                 const nextChapterLink = $('a[rel="next"]').attr('href');
                 console.log(nextChapterLink);
-                const nextChapterUrl = nextChapterLink.length ? new URL(nextChapterLink, url).toString() : null;
+                const nextChapterUrl = nextChapterLink.length ? new URL(nextChapterLink, url).toString() : null;                
 
                 const chapterText = `<h1>${chapterTitle}</h1>\n${chapterContainer.html()}`;
 
@@ -168,98 +168,81 @@ function extractChapterNumber(chapterText, directory) {
 }
 
 
-async function downloadChapters(title, author, startUrl, coverUrl, sendUpdate) {
+async function downloadChapters(title, author, startUrl, coverUrl, sendUpdate, skipFirstChapter = false) {
     let url = startUrl;
-    let chapterNumber = 1;
 
+    // If no `sendUpdate` function is provided, default to logging to the console
     if (!sendUpdate) {
-        sendUpdate = (message) => { console.log(message) };
+        sendUpdate = message => { console.log(message); };
     }
 
-    const directory = title.replace(/\s+/g, '_');  // Replace spaces with underscores
+    // Generate directory name by replacing spaces with underscores
+    const directory = title.replace(/\s+/g, '_');
 
+    // Ensure directory exists
     if (!fs.existsSync(path.join("public", directory))) {
         fs.mkdirSync(path.join("public", directory));
     }
 
-    while (url) {
-        
-        const books = JSON.parse(fs.readFileSync('books.json', 'utf8'));
-        const book = books.find(book => book.title === title);
-        if (book) {
-            if (url !== "javascript:;") {
-                book.ch1 = url;
-                fs.writeFileSync('books.json', JSON.stringify(books, null, 2));
-            }
+    const dirPath = path.join("public", directory);
+    let chapterNumber = 1;  // Default to 1 if no chapters exist already
+
+    // Calculate the next chapter number based on the last file saved:
+    const existingChapters = fs.readdirSync(dirPath)
+        .filter(file => file.startsWith('chapter_') && file.endsWith('.html'))
+        .sort((a, b) => parseInt(a.split('_')[1]) - parseInt(b.split('_')[1]));
+
+    if (existingChapters.length > 0) {
+        const lastChapterFile = existingChapters[existingChapters.length - 1];
+        chapterNumber = parseInt(lastChapterFile.split('_')[1]) + 1; // Start from next chapter number
+    }
+
+    if (skipFirstChapter) {
+        sendUpdate(`Cron job detected. Skipping download of the current chapter at ${url} and finding the next chapter.`);
+
+        // Fetch the next URL without downloading the current chapter
+        const [_, nextUrl] = await fetchChapter(url, sendUpdate); 
+        if (!nextUrl) {
+            sendUpdate("No next chapter found. Exiting...");
+            return;
         }
 
+        // Update URL to next chapter's URL and move to the next one for downloading
+        url = nextUrl;
+    }
+
+    while (url) {
+        // Update the JSON file with the latest chapter URL
+        const books = JSON.parse(fs.readFileSync('books.json', 'utf8'));
+        const book = books.find(book => book.title === title);
+
+        if (book && url !== "javascript:;") {
+            book.ch1 = url;
+            fs.writeFileSync('books.json', JSON.stringify(books, null, 2));
+        }
+
+        // Fetch chapter content and the next URL
         const [chapterText, nextUrl] = await fetchChapter(url, sendUpdate);
-        
+
         if (!chapterText) {
             sendUpdate("Failed to fetch chapter content. Exiting...");
             break;
         }
 
-        const extractedChapterNumber = extractChapterNumber(chapterText, directory);
-
-        if (extractedChapterNumber === null) {
-            sendUpdate('Failed to extract chapter number. Exiting...');
-            break;
-        }
-
-        saveChapter(chapterText, extractedChapterNumber, directory, sendUpdate);
+        // Save the chapter content with the correct chapter number
+        saveChapter(chapterText, chapterNumber, directory, sendUpdate);
 
         if (!nextUrl) {
             sendUpdate("No next chapter found. Exiting...");
+            break;
         }
 
+        // Move to the next URL and increment the chapter number
         url = nextUrl;
-        chapterNumber += 1;  // Increment the chapter number for the next iteration
+        chapterNumber += 1;  
     }
 
-    // checking to see if the fetch.lock exists in the directory to prevent duplicate downloads
-    if (fs.existsSync(path.join("public", directory, "fetch.lock"))) {
-        sendUpdate("Fetch lock exists. Exiting...");
-        fs.writeFileSync(path.join("public", directory, "fetch.lock"), 'lock');
-    }
-
-    // Find the last saved chapter to continue downloading from there
-    while (fs.existsSync(path.join("public", directory, `chapter_${chapterNumber}.html`))) {
-        chapterNumber += 1;
-    }
-
-    // Deduct 1, because the loop above increments before the last valid chapter check
-    if (chapterNumber > 1) {
-        chapterNumber -= 1;
-        const lastFile = fs.readFileSync(path.join("public", directory, `chapter_${chapterNumber}.html`), 'utf-8');
-        console.log(startUrl);
-        // use fetch to grab the HTML from startUrl
-        const response = await fetch(startUrl);
-        const html = await response.text();
-        // use cheerio to parse the HTML
-        const $ = cheerio.load(html);
-
-        if(startUrl.includes("royalroad")) {
-            // Find the next chapter link in body > div.page-container > div > div > div > div > div.portlet.light.chapter.font-size-14.width-100.font-family-default.indent-default.paragraph-spacing-30 > div.portlet-body > div.row.nav-buttons > div.col-xs-6.col-md-4.col-md-offset-4.col-lg-3.col-lg-offset-6 > a
-            const nextChapterLink = $('div.portlet-body > div.row.nav-buttons > div.col-xs-6.col-md-4.col-md-offset-4.col-lg-3.col-lg-offset-6 > a').attr('href');
-            console.log(nextChapterLink);
-            if (nextChapterLink && nextChapterLink !== "javascript:;") {
-                url = new URL(nextChapterLink, startUrl).toString();
-            } else {
-                sendUpdate("Done Downloading Chapters...");
-            }
-        } else {
-            const nextChapterLink = $('a[rel="next"]').attr('href');
-
-            if (nextChapterLink && nextChapterLink !== "javascript:;") {
-                url = new URL(nextChapterLink, startUrl).toString();
-            } else {
-                sendUpdate("Done Downloading Chapters...");
-            }
-        }
-    }
-
-    // Download cover image and create epub
+    // After fetching all chapters, download any cover image and generate the EPUB file
     await downloadCoverImage(coverUrl, directory, sendUpdate);
     await createEpub(title, author, directory, sendUpdate);
 }
@@ -378,7 +361,7 @@ app.get("/cron", (req, res) => {
                     console.log(`${book.title}: \n Found ${files.length} files.\n Total chapters: ${book.totalChapters}\n`);
                     if (files.length < book.totalChapters) {
 
-                        downloadChapters(book.title, book.author, book.ch1, book.coverUrl, null);
+                        downloadChapters(book.title, book.author, book.ch1, book.coverUrl, null, true);
 
                     } else {
                         console.log(`Skipping ${book.title} because it is up to date.`);
