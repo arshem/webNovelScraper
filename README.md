@@ -10,10 +10,13 @@ WebNovelScraper is a Node.js application to automatically download chapters from
 - lightnovelhub.org
 - lightnovelpub.com
 - royalroad.com
+- findnovel.net
+- novelworm.net
 
 ## Features
 
 - Fetches chapters from a given starting URL.
+- Catches 429 errors and waits to try again.
 - Downloads cover image if available.
 - Compiles fetched chapters into an EPUB.
 - Real-time updates via WebSocket.
@@ -25,7 +28,7 @@ WebNovelScraper is a Node.js application to automatically download chapters from
 
 - Node.js (compatible with the latest version)
 - npm (Node package manager)
-- Cron (optional, if you want to automatically fetch new chapters)
+- Cron (optional, if you want to automatically fetch new chapters, keep an eye on your logs in case you get blacklisted!)
 
 ## Installation
 
