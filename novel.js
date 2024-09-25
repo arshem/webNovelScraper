@@ -6,7 +6,8 @@ const fs = require('fs');
 const { URL } = require('url');
 const WebSocket = require('ws');
 const { exit } = require('process');
-const epub = require('epub-gen')
+const epub = require('epub-gen');
+const { create } = require('domain');
 
 const app = express();
 const port = 3000;
@@ -18,8 +19,8 @@ app.set('view engine', 'ejs');
 app.set('views', path.join(__dirname, 'views'));
 
 const headers = {
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/70.0.3538.77 Safari/537.36'
-};
+    'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36'
+}
 
 // making the project locks better:
 function createLock(directory, sendUpdate) {
@@ -30,9 +31,19 @@ function createLock(directory, sendUpdate) {
         return false;
     }
 
-    fs.writeFileSync(lockFilePath, 'locked');
-    sendUpdate(`Lock file created for ${directory}. Starting process...`);
-    return true;
+    try 
+    {
+        fs.writeFileSync(lockFilePath, 'locked');
+        sendUpdate(`Lock file created for ${directory}. Starting process...`);
+        return true;
+    } 
+    catch (err) 
+    {
+        // create directory if it doesn't exist
+        fs.mkdirSync(lockFilePath, { recursive: true });
+        sendUpdate(`Lock file created for ${directory}. Starting process...`);
+        return true;
+    }
 }
 
 function removeLock(directory, sendUpdate) {
@@ -45,52 +56,88 @@ function removeLock(directory, sendUpdate) {
 }
 
 async function fetchChapter(url, sendUpdate) {
-    if(url !== "javascript:;") {
-        try {
-            const response = await axios.get(url, { headers });
-            const $ = cheerio.load(response.data);
+    if (url !== "javascript:;") {
+        let attempts = 0; // Track the number of attempts
+        const maxAttempts = 3; // Maximum attempts to fetch the chapter
 
-            if(url.includes("royalroad")) {
-                const chapterTitle = $('body > div.page-container > div > div > div > div > div.row.fic-header.margin-bottom-40 > div > div.col-md-5.col-lg-6.col-md-offset-1.text-center.md-text-left > h1').text().trim();
-                const chapterContainer = $('.chapter-content')
-                const nextChapterLink = $('div.portlet-body > div.row.nav-buttons > div.col-xs-6.col-md-4.col-md-offset-4.col-lg-3.col-lg-offset-6 > a').attr('href');
+        while (attempts < maxAttempts) {
+            try {
+                sendUpdate(`Fetching chapter from URL: ${url}`); // Log the URL being fetched
+                const response = await axios.get(url, { headers });
+                const $ = cheerio.load(response.data);
 
-                if(nextChapterLink)
-                {
-                    const nextChapterUrl = new URL(nextChapterLink, url).toString();
+                // Extract chapter content based on the site structure
+                if (url.includes("royalroad")) {
+                    const chapterTitle = $('body > div.page-container > div > div > div > div > div.row.fic-header.margin-bottom-40 > div > div.col-md-5.col-lg-6.col-md-offset-1.text-center.md-text-left > h1').text().trim();
+                    const chapterContainer = $('.chapter-content');
+                    const nextChapterLink = $('div.portlet-body > div.row.nav-buttons > div.col-xs-6.col-md-4.col-md-offset-4.col-lg-3.col-lg-offset-6 > a').attr('href');
+
+                    // Log the chapter title and next chapter link
+                    sendUpdate(`Fetched title: "${chapterTitle}", Looking for next chapter link...`);
+
+                    if (nextChapterLink) {
+                        const nextChapterUrl = new URL(nextChapterLink, url).toString();
+                        const chapterText = `<h1>${chapterTitle}</h1>\n${chapterContainer.html()}`;
+                        sendUpdate(`Successfully fetched chapter "${chapterTitle}" and next: "${nextChapterUrl}"`);
+
+                        return [chapterText, nextChapterUrl];
+                    } else {
+                        const chapterText = `<h1>${chapterTitle}</h1>\n${chapterContainer.html()}`;
+                        sendUpdate(`Successfully fetched chapter: "${chapterTitle}" without a next link.`);
+                        return [chapterText, null];
+                    }
+                } else if (url.includes("findnovel")) {
+                    $('.box-notification').remove();
+                    const chapterTitle = $('.chapter-title').text().trim() || 'Untitled Chapter';
+                    const chapterContainer = $('#content');
+                    const nextChapterLink = $('a[rel="next"]').attr('href');
+
+                    if (!nextChapterLink) {
+                        sendUpdate(`No next chapter found for: "${chapterTitle}"`);
+                        return [null, null];
+                    }
+                    const nextChapterUrl = nextChapterLink.length ? new URL(nextChapterLink, url).toString() : null;                
+
                     const chapterText = `<h1>${chapterTitle}</h1>\n${chapterContainer.html()}`;
-                    sendUpdate(`Successfully fetched chapter and next: "${chapterTitle}"`);
+                    sendUpdate(`Successfully fetched chapter: "${chapterTitle}" and next: "${nextChapterUrl}"`);
 
                     return [chapterText, nextChapterUrl];
                 } else {
+                    const chapterTitle = $('.chapter-title').text().trim() || 'Untitled Chapter';
+                    const chapterContainer = $('#chapter-container');
+                    const nextChapterLink = $('a[rel="next"]').attr('href');
+
+                    if (!nextChapterLink) {
+                        sendUpdate(`No next chapter found for: "${chapterTitle}"`);
+                        return [null, null];
+                    }
+                    const nextChapterUrl = nextChapterLink.length ? new URL(nextChapterLink, url).toString() : null;                
+
                     const chapterText = `<h1>${chapterTitle}</h1>\n${chapterContainer.html()}`;
-                    sendUpdate(`Successfully fetched chapter: "${chapterTitle}"`);
-                    return [chapterText, null];
+                    sendUpdate(`Successfully fetched chapter: "${chapterTitle}" and next: "${nextChapterUrl}"`);
+
+                    return [chapterText, nextChapterUrl];
                 }
-            } else {
-                const chapterTitle = $('.chapter-title').text().trim() || 'Untitled Chapter';
-                const chapterContainer = $('#chapter-container');
-                const nextChapterLink = $('a[rel="next"]').attr('href');
-                console.log(nextChapterLink);
-                const nextChapterUrl = nextChapterLink.length ? new URL(nextChapterLink, url).toString() : null;                
 
-                const chapterText = `<h1>${chapterTitle}</h1>\n${chapterContainer.html()}`;
-
-                sendUpdate(`Successfully fetched chapter: "${chapterTitle}"`);
-
-                return [chapterText, nextChapterUrl];
+            } catch (error) {
+                if (error.response && error.response.status === 429) {
+                    attempts++;
+                    sendUpdate(`Received 429 error! Attempt ${attempts} of ${maxAttempts}. Retrying in 15 seconds...`);
+                    await new Promise(resolve => setTimeout(resolve, 15000)); // Wait for 15 seconds before retrying
+                } else {
+                    sendUpdate(`Failed to fetch chapter content from ${url}: ${error.message}`); // Log error message for other errors
+                    return [null, null];
+                }
             }
-
-        } catch (error) {
-            sendUpdate(`Failed to fetch chapter content from ${url}: ${error}`);
-            return [null, null];
         }
+
+        sendUpdate(`Max attempts reached for: ${url}. Exiting...`);
+        return [null, null]; // Return null if max attempts are exceeded
     } else {
         sendUpdate("Downloading Chapters Completed...");
         return [null, null];
     }
 }
-
 function saveChapter(content, chapterNumber, directory, sendUpdate) {
     const filename = path.join("public", directory, `chapter_${chapterNumber}.html`);
     
@@ -235,6 +282,7 @@ async function downloadChapters(title, author, startUrl, coverUrl, sendUpdate, s
         
         // If the last chapter and current startUrl chapter titles match, skip the first chapter
         if (lastChapterTitle === currentChapterTitle) {
+            
             sendUpdate(`The chapter from startUrl "${url}" matches the last downloaded chapter. Skipping this chapter.`);
             url = nextUrl;  // Move to the next chapter URL
         } else {
@@ -314,8 +362,32 @@ async function getTitlePage(url, sendUpdate) {
             sendUpdate(`Failed to fetch title page: ${error}`);
             return [null, null, null];
         }
+    } else if(url.includes("novelworm")) {
+        try {
+            
+            const response = await axios.get(url, { headers });
+            const $ = cheerio.load(response.data);
+            const title = $('h1.novel-title.text2row').text().trim();
+            const author = $('div.author').text().replace("Author:", "").replace(/\n+/g, '').trim();
+
+            const rootUrl = new URL(url).origin;
+
+            // startUrl is coming from: #novel > header > div.header-body.container > div.novel-info > nav > a:nth-child(1)
+            const startUrl = new URL($('div.novel-info > nav > a:nth-child(1)').attr('href'), rootUrl).toString();
+            console.log(startUrl);
+            const coverUrl = $('figure.cover img').attr('data-src');
+            const chapterCount = $('div.header-stats span strong').text().trim().split(' ')[0];
+            const status = $('div.header-stats span:last-child').text().replace("Status", "").trim();
+
+            //sendUpdate(`Successfully fetched title page: ${title}, ${author}, ${startUrl}, ${coverUrl}, ${chapterCount}, ${status}`);
+            return [title, author, startUrl, coverUrl, chapterCount, status, url];
+        } catch (error) {
+            sendUpdate(`Failed to fetch title page: ${error}`);
+            return [null, null, null, null, null, null];
+        }
     } else {
         try {
+            
             const response = await axios.get(url, { headers });
             const $ = cheerio.load(response.data);
             const title = $('h1.novel-title.text2row').text().trim();
@@ -323,6 +395,7 @@ async function getTitlePage(url, sendUpdate) {
 
             const rootUrl = new URL(url).origin;
             const startUrl = new URL($('a#readchapterbtn').attr('href'), rootUrl).toString();
+            console.log(startUrl);
             const coverUrl = $('figure.cover img').attr('data-src');
             const chapterCount = $('div.header-stats span strong').text().trim().split(' ')[0];
             const status = $('div.header-stats span:last-child').text().replace("Status", "").trim();
@@ -423,6 +496,32 @@ app.get("/cron", (req, res) => {
     res.status(200).json({ message: 'Cron job done' });
 })
 
+app.get('/compile/:folder', (req, res) => {
+    
+    const sendUpdate = (message) => {
+        console.log(message);
+    };
+
+    const folder = req.params.folder;
+    
+    // get author from books.json using folder.replace('__', ' ') as the 'title' key
+    const books = JSON.parse(fs.readFileSync('books.json', 'utf8'));
+    const book = books.find(b => b.title === folder.replace('_', ' '));
+    if (!book) {
+        sendUpdate('Book not found in books.json.');
+        return;
+    }
+
+    const title = book.title;
+    const author = book.author;
+
+    createEpub(title, author, folder, sendUpdate);
+    
+
+    res.status(200).json({ message: 'Compilation started' });
+
+})
+
 app.post('/download', (req, res) => {
     const { startUrl } = req.body;
     const clientId = req.body.clientId;
@@ -438,11 +537,6 @@ app.post('/download', (req, res) => {
         getTitlePage(startUrl, sendUpdate).then(([title, author, ch1, coverUrl, totalChapters, status, url]) => {
             if (title) {
                 const directory = title.replace(/\s+/g, '_');  // Replace spaces with underscores
-
-                // Create the lock specific to this book directory
-                if (!createLock(directory, sendUpdate)) {
-                    return res.status(423).json({ message: "Download locked by another process." });
-                }
 
                 try {
                     if (!fs.existsSync("public/" + directory)) {
